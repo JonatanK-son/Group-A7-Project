@@ -11,14 +11,27 @@ log = StructuredLogger("spark_transforms")
 # ── Session factory ───────────────────────────────────────────────────────────
 
 def get_spark_session(app_name: str = "EcomPipeline-A7") -> SparkSession:
-    return (
+    spark = (
         SparkSession.builder
         .appName(app_name)
         .config("spark.sql.shuffle.partitions", "50")
         .config("spark.driver.memory", "4g")
         .config("spark.sql.adaptive.enabled", "true")
+        .config("spark.ui.enabled", "true")
+        .config("spark.ui.port", "4040")
         .getOrCreate()
     )
+    return spark
+
+
+def get_spark_dashboard_url(spark: SparkSession) -> str:
+    """Return the Spark web UI URL (e.g. http://localhost:4040)."""
+    sc = spark.sparkContext
+    ui_url = sc.uiWebUrl  # None if the UI is disabled
+    if ui_url:
+        return ui_url
+    port = sc._conf.get("spark.ui.port", "4040")
+    return f"http://localhost:{port}"
 
 
 # ── Loader ────────────────────────────────────────────────────────────────────
