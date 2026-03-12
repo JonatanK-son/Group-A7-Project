@@ -1,0 +1,62 @@
+# Dask Scheduler — Deployment + Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dask-scheduler
+  labels:
+    app: dask-scheduler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dask-scheduler
+  template:
+    metadata:
+      labels:
+        app: dask-scheduler
+    spec:
+      containers:
+        - name: dask-scheduler
+          image: ecom-pipeline:latest
+          imagePullPolicy: Never          # built locally with Minikube
+          command: ["dask", "scheduler"]
+          ports:
+            - containerPort: 8786         # scheduler
+            - containerPort: 8787         # dashboard
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu:    "250m"
+            limits:
+              memory: "1Gi"
+              cpu:    "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dask-scheduler
+spec:
+  selector:
+    app: dask-scheduler
+  ports:
+    - name: scheduler
+      port: 8786
+      targetPort: 8786
+    - name: dashboard
+      port: 8787
+      targetPort: 8787
+  type: ClusterIP
+---
+# Expose dashboard via NodePort for Minikube access
+apiVersion: v1
+kind: Service
+metadata:
+  name: dask-dashboard
+spec:
+  selector:
+    app: dask-scheduler
+  ports:
+    - port: 8787
+      targetPort: 8787
+      nodePort: 30787
+  type: NodePort

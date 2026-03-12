@@ -1,0 +1,41 @@
+# Pipeline Job — runs run_pipeline.py once then exits
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ecom-pipeline-job
+spec:
+  backoffLimit: 2           # retry up to 2 times on failure
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: pipeline
+          image: ecom-pipeline:latest
+          imagePullPolicy: Never
+          command: ["python", "pipeline/run_pipeline.py"]
+          env:
+            - name: DASK_SCHEDULER_ADDRESS
+              value: "tcp://dask-scheduler:8786"
+            - name: PYTHONPATH
+              value: /app
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu:    "500m"
+            limits:
+              memory: "2Gi"
+              cpu:    "1000m"
+          volumeMounts:
+            - name: data-volume
+              mountPath: /app/data
+            - name: output-volume
+              mountPath: /app/output
+      volumes:
+        - name: data-volume
+          hostPath:
+            path: /data
+            type: Directory
+        - name: output-volume
+          hostPath:
+            path: /output
+            type: DirectoryOrCreate

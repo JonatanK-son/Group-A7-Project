@@ -1,0 +1,47 @@
+# Dask Workers — Deployment (scale replicas for more parallelism)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dask-worker
+  labels:
+    app: dask-worker
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: dask-worker
+  template:
+    metadata:
+      labels:
+        app: dask-worker
+    spec:
+      containers:
+        - name: dask-worker
+          image: ecom-pipeline:latest
+          imagePullPolicy: Never
+          command:
+            - dask
+            - worker
+            - tcp://dask-scheduler:8786
+            - --nthreads
+            - "2"
+            - --memory-limit
+            - "2GB"
+          env:
+            - name: PYTHONPATH
+              value: /app
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu:    "500m"
+            limits:
+              memory: "2Gi"
+              cpu:    "1000m"
+          volumeMounts:
+            - name: data-volume
+              mountPath: /app/data
+      volumes:
+        - name: data-volume
+          hostPath:
+            path: /data          # minikube mount: minikube mount ./data:/data
+            type: Directory
