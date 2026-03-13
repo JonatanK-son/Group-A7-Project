@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: dask-worker
-          image: ecom-pipeline:latest
+          image: ecom-pipeline:dev
           imagePullPolicy: Never
           command:
             - dask
@@ -40,8 +40,14 @@ spec:
           volumeMounts:
             - name: data-volume
               mountPath: /app/data
+            - name: output-volume
+              mountPath: /app/output
       volumes:
         - name: data-volume
           hostPath:
-            path: /data          # minikube mount: minikube mount ./data:/data
+            path: /data
             type: Directory
+        - name: output-volume
+          hostPath:
+            path: /output
+            type: DirectoryOrCreate

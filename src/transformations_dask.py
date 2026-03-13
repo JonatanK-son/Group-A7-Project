@@ -9,7 +9,7 @@ log = StructuredLogger("dask_transforms")
 
 def _top_category(ddf: dd.DataFrame) -> dd.DataFrame:
     return ddf.assign(
-        top_category=ddf["category_code"].str.split(".").str[0].fillna("unknown")
+        top_category=lambda x: x["category_code"].str.split(".").str[0].fillna("unknown")
     )
 
 
@@ -61,6 +61,10 @@ def compute_conversion_funnel(ddf: dd.DataFrame) -> pd.DataFrame:
             pivot[col] = 0
     pivot["cart_rate"]     = pivot["cart"]     / pivot["view"].replace(0, float("nan"))
     pivot["purchase_rate"] = pivot["purchase"] / pivot["view"].replace(0, float("nan"))
+    
+    # Sort by view volume so the most important categories are at the top
+    pivot = pivot.sort_values("view", ascending=False).reset_index(drop=True)
+    
     log.info("conversion_funnel_done", categories=len(pivot))
     return pivot
 
@@ -77,12 +81,13 @@ def compute_hourly_activity(ddf: dd.DataFrame) -> pd.DataFrame:
     event_types = ["view", "cart", "purchase", "remove_from_cart"]
     frames: list[pd.DataFrame] = []
     for etype in event_types:
+        subset = ddf[ddf["event_type"] == etype]
+        # Use value_counts on the Series directly to avoid .assign() index alignment issues
         counts = (
-            ddf[ddf["event_type"] == etype]
-            .map_partitions(lambda df: df.assign(hour=df["event_time"].dt.hour))
-            .groupby("hour")
-            .size()
+            subset["event_time"].dt.hour
+            .value_counts()
             .compute()
+            .rename_axis("hour")
             .rename("count")
             .reset_index()
         )

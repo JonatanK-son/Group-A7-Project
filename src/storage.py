@@ -13,9 +13,15 @@ def save_parquet_dask(
     ddf: dd.DataFrame,
     path: str | Path,
     partition_on: list | None = None,
+    overwrite: bool = False,
 ) -> None:
     """Write a Dask DataFrame to a Parquet dataset directory."""
     path = Path(path)
+    if overwrite and path.exists():
+        log.info("clearing_existing_directory", path=str(path))
+        import shutil
+        shutil.rmtree(path)
+    
     path.mkdir(parents=True, exist_ok=True)
     log.info("saving_parquet_dask", path=str(path))
     kwargs = {"partition_on": partition_on} if partition_on else {}

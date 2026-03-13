@@ -10,7 +10,7 @@ spec:
       restartPolicy: OnFailure
       containers:
         - name: pipeline
-          image: ecom-pipeline:latest
+          image: ecom-pipeline:dev
           imagePullPolicy: Never
           command: ["python", "pipeline/run_pipeline.py"]
           env:

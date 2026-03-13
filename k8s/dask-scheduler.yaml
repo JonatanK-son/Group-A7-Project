@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: dask-scheduler
-          image: ecom-pipeline:latest
+          image: ecom-pipeline:dev
           imagePullPolicy: Never          # built locally with Minikube
           command: ["dask", "scheduler"]
           ports:

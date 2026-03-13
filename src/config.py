@@ -1,6 +1,15 @@
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+import os
+import platform
+PROJECT_ROOT = Path(os.getenv("PROJECT_ROOT", Path(__file__).resolve().parent.parent))
+
+# When running in Linux containers (Docker/K8s), ensure we use /app as the base
+# We check for a common container file to be sure
+IS_CONTAINER = os.path.exists("/.dockerenv") or os.path.exists("/run/.containerenv")
+if platform.system() == "Linux" and (IS_CONTAINER or os.path.exists("/app/src")):
+    PROJECT_ROOT = Path("/app")
+
 DATA_DIR     = PROJECT_ROOT / "data"
 OUTPUT_DIR   = PROJECT_ROOT / "output"
 LOGS_DIR     = PROJECT_ROOT / "logs"
