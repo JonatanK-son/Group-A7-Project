@@ -14,7 +14,8 @@ sys.path.insert(0, str(ROOT))
 from dask.distributed import Client
 
 from src.config import (
-    RAW_OCT, RAW_NOV, OUTPUT_DIR, LOGS_DIR,
+    RAW_OCT, RAW_NOV, get_available_data_paths,
+    OUTPUT_DIR, LOGS_DIR,
     PARQUET_VALIDATED, RESULTS_DIR,
 )
 from src.logger import StructuredLogger
@@ -31,7 +32,7 @@ from src.storage import save_parquet_dask, save_parquet_pandas, load_parquet
 
 log = StructuredLogger("run_pipeline")
 
-SCHEDULER_ADDRESS = os.getenv("DASK_SCHEDULER_ADDRESS", "tcp://localhost:8786")
+SCHEDULER_ADDRESS = os.getenv("DASK_SCHEDULER_ADDRESS", None)
 
 for d in [OUTPUT_DIR, LOGS_DIR, PARQUET_VALIDATED, RESULTS_DIR]:
     Path(d).mkdir(parents=True, exist_ok=True)
@@ -43,12 +44,19 @@ def main():
     pipeline_start = time.time()
 
     # Stage 1: Ingest ───────────────────────────────────────────────────────
-    SAMPLE_MODE = True  # Set to False to run on the full dataset
+    SAMPLE_MODE = os.getenv("SAMPLE_MODE", "True").lower() == "true"
+
+    available_paths = get_available_data_paths()
+    if not available_paths:
+        log.error("no_data_found", message="No CSV files found in data/ directory. Did you run 'just data-sample'?")
+        sys.exit(1)
 
     with log.timer("ingestion") as t:
-        raw_ddf = load_csvs([RAW_OCT, RAW_NOV])
+        raw_ddf = load_csvs(available_paths)
         if SAMPLE_MODE:
-            log.info("sampling_enabled", message="Processing only the first 128MB partition")
+            # If the data is already small (e.g. 100MB sample), Dask might have only 1 partition
+            num_available = raw_ddf.npartitions
+            log.info("sampling_enabled", available_partitions=num_available)
             raw_ddf = raw_ddf.partitions[:1]
     timings["ingestion"] = t.elapsed
 
