@@ -1,4 +1,10 @@
-data/2019-Nov.csv
-data/2019-Oct.csv
-
+data/*.csv
 /output
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+.vscode/
+.idea/
+.ipynb_checkpoints/
+logs/
