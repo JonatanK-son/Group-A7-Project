@@ -3,6 +3,8 @@ from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
 
+from src.config import TEST_MODE
+
 from src.logger import StructuredLogger
 
 log = StructuredLogger("spark_transforms")
@@ -10,7 +12,28 @@ log = StructuredLogger("spark_transforms")
 
 # ── Session factory ───────────────────────────────────────────────────────────
 
+import os
+import sys
+
+# ── Environment Fix ───────────────────────────────────────────────────────────
+# We must apply these BEFORE SparkSession is fully initialized.
+# Force PySpark to use its own bundled JARs by unsetting SPARK_HOME
+if "SPARK_HOME" in os.environ:
+    log.info("spark_env_fix", action="unsetting_spark_home", original=os.environ["SPARK_HOME"])
+    del os.environ["SPARK_HOME"]
+
+# Ensure a modern Java version is used (Spark 4.1+ requires Java 17+)
+if "JAVA_HOME" not in os.environ or "java-8" in os.environ["JAVA_HOME"] or "java-11" in os.environ["JAVA_HOME"]:
+    possible_java_21 = "/usr/lib/jvm/java-21-openjdk-amd64"
+    if os.path.exists(possible_java_21):
+        os.environ["JAVA_HOME"] = possible_java_21
+        os.environ["PATH"] = f"{os.environ['JAVA_HOME']}/bin:{os.environ['PATH']}"
+        log.info("spark_env_fix", action="setting_java_home", new_path=possible_java_21)
+# ──────────────────────────────────────────────────────────────────────────────
+
 def get_spark_session(app_name: str = "EcomPipeline-A7") -> SparkSession:
+    """Creates or gets a SparkSession."""
+
     spark = (
         SparkSession.builder
         .appName(app_name)
@@ -51,6 +74,10 @@ def load_csv_spark(spark: SparkSession, path: str | list[str]) -> DataFrame:
         .option("mode", "DROPMALFORMED")
         .csv(paths)
     )
+    if TEST_MODE:
+        log.info("test_mode_enabled", action="limiting_spark_input")
+        df = df.limit(100000)
+        
     log.info("spark_csv_loaded", files=len(paths), partitions=df.rdd.getNumPartitions())
     return df
 

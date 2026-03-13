@@ -4,7 +4,7 @@ from pathlib import Path
 
 import dask.dataframe as dd
 
-from src.config import DTYPES, BLOCKSIZE
+from src.config import DTYPES, BLOCKSIZE, TEST_MODE
 from src.logger import StructuredLogger
 
 log = StructuredLogger("ingestion")
@@ -45,6 +45,11 @@ def load_csvs(paths: list) -> dd.DataFrame:
     Dask handles the list natively — no concat overhead.
     """
     str_paths = [str(p) for p in paths]
+    if TEST_MODE:
+        log.info("test_mode_enabled", action="limiting_dask_input")
+        # In test mode, only load the first file and only take a few partitions
+        str_paths = str_paths[:1]
+
     log.info("load_csvs_started", files=str_paths)
     ddf = dd.read_csv(
         str_paths,
@@ -53,5 +58,10 @@ def load_csvs(paths: list) -> dd.DataFrame:
         blocksize=BLOCKSIZE,
         on_bad_lines="skip",
     )
+    
+    if TEST_MODE:
+        # Limit to first partition for speed
+        ddf = ddf.partitions[:1]
+
     log.info("load_csvs_ok", files=len(str_paths), partitions=ddf.npartitions)
     return ddf

@@ -4,6 +4,9 @@ import os
 import platform
 PROJECT_ROOT = Path(os.getenv("PROJECT_ROOT", Path(__file__).resolve().parent.parent))
 
+# Test mode — when True, loaders limit data to ~5% for faster local development
+TEST_MODE = os.getenv("TEST_MODE", "false").lower() == "true"
+
 # When running in Linux containers (Docker/K8s), ensure we use /app as the base
 # We check for a common container file to be sure
 IS_CONTAINER = os.path.exists("/.dockerenv") or os.path.exists("/run/.containerenv")

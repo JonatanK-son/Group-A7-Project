@@ -4,6 +4,8 @@ from pathlib import Path
 import dask.dataframe as dd
 import pandas as pd
 
+from src.config import TEST_MODE
+
 from src.logger import StructuredLogger
 
 log = StructuredLogger("storage")
@@ -39,4 +41,8 @@ def save_parquet_pandas(df: pd.DataFrame, path: str | Path) -> None:
 
 def load_parquet(path: str | Path) -> dd.DataFrame:
     """Load a Parquet dataset as a lazy Dask DataFrame."""
-    return dd.read_parquet(str(path))
+    ddf = dd.read_parquet(str(path))
+    if TEST_MODE:
+        log.info("test_mode_enabled", action="limiting_dask_load")
+        ddf = ddf.partitions[:1]
+    return ddf
