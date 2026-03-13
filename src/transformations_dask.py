@@ -79,7 +79,7 @@ def compute_hourly_activity(ddf: dd.DataFrame) -> pd.DataFrame:
     for etype in event_types:
         counts = (
             ddf[ddf["event_type"] == etype]
-            .assign(hour=ddf["event_time"].dt.hour)
+            .assign(hour=lambda x: x["event_time"].dt.hour)
             .groupby("hour")
             .size()
             .compute()
