@@ -47,7 +47,7 @@ def main():
     SAMPLE_MODE = False  # Set to False to run on the full dataset
 
     with log.timer("ingestion") as t:
-        raw_ddf = load_csvs(available_paths)
+        raw_ddf = load_csvs(RAW_OCT, RAW_NOV)
         if SAMPLE_MODE:
             # If the data is already small (e.g. 100MB sample), Dask might have only 1 partition
             num_available = raw_ddf.npartitions
