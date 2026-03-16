@@ -7,10 +7,14 @@ import os
 import sys
 import time
 from pathlib import Path
+import shutil # Added for consistent handling of directory removal
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+import platform
+import socket
+import dask.dataframe as dd
 from dask.distributed import Client
 
 from src.config import (
@@ -32,104 +36,132 @@ from src.storage import save_parquet_dask, save_parquet_pandas, load_parquet
 
 log = StructuredLogger("run_pipeline")
 
-SCHEDULER_ADDRESS = os.getenv("DASK_SCHEDULER_ADDRESS", None)
-
-for d in [OUTPUT_DIR, LOGS_DIR, PARQUET_VALIDATED, RESULTS_DIR]:
-    Path(d).mkdir(parents=True, exist_ok=True)
-
-
-def main():
-    log.info("pipeline_started")
-    timings: dict[str, float] = {}
-    pipeline_start = time.time()
-
-    # Stage 1: Ingest ───────────────────────────────────────────────────────
-    SAMPLE_MODE = False  # Set to False to run on the full dataset
-
-    with log.timer("ingestion") as t:
-        raw_ddf = load_csvs(RAW_OCT, RAW_NOV)
-        if SAMPLE_MODE:
-            # If the data is already small (e.g. 100MB sample), Dask might have only 1 partition
-            num_available = raw_ddf.npartitions
-            log.info("sampling_enabled", available_partitions=num_available)
-            raw_ddf = raw_ddf.partitions[:1]
-    timings["ingestion"] = t.elapsed
-
-    schema = validate_schema(raw_ddf)
-    if not schema["valid"]:
-        log.error("schema_invalid", missing=schema["missing"])
-        sys.exit(1)
-
-    with log.timer("cleaning") as t:
-        clean_ddf = clean_data(raw_ddf)
-    timings["cleaning"] = t.elapsed
-
-    # ── Stage 2: Save validated Parquet ───────────────────────────────────────
-    with log.timer("save_validated") as t:
-        save_parquet_dask(clean_ddf, PARQUET_VALIDATED, partition_on=["event_type"], overwrite=True)
-    timings["save_validated"] = t.elapsed
-
-    # ── Stage 3: Dask analyses ────────────────────────────────────────────────
-    client_kwargs = {"address": SCHEDULER_ADDRESS} if SCHEDULER_ADDRESS else {}
-
-    with Client(**client_kwargs) as client:
-        log.info("dask_client_connected", dashboard=getattr(client, "dashboard_link", "N/A"))
-
-        # Discovery task to resolve paths on the cluster
-        def get_remote_ddf():
-            import dask.dataframe as dd
-            from src.config import PARQUET_VALIDATED
-            # We use the version of PARQUET_VALIDATED defined on the cluster (Linux)
-            return dd.read_parquet(str(PARQUET_VALIDATED))
-
-        if SCHEDULER_ADDRESS:
-            log.info("remote_analysis_started")
-            # 1. Resolve DDF on the cluster. Keep it as a future to avoid Windows serialization issues.
-            ddf_future = client.submit(get_remote_ddf)
-            
-            # 2. Submit each analysis separately, passing the future as an argument
-            log.info("submitting_individual_analyses")
-            results = {
-                "revenue":  client.submit(compute_revenue_by_category, ddf_future).result(),
-                "funnel":   client.submit(compute_conversion_funnel,   ddf_future).result(),
-                "hourly":   client.submit(compute_hourly_activity,    ddf_future).result(),
-                "sessions": client.submit(compute_session_stats,      ddf_future).result(),
-                "brands":   client.submit(compute_top_brands,         ddf_future).result(),
-            }
-            log.info("remote_analysis_done")
-        else:
-            # Local Mode execution
-            ddf = load_parquet(PARQUET_VALIDATED)
-            results = {
-                "revenue":  compute_revenue_by_category(ddf),
-                "funnel":   compute_conversion_funnel(ddf),
-                "hourly":   compute_hourly_activity(ddf),
-                "sessions": compute_session_stats(ddf),
-                "brands":   compute_top_brands(ddf),
-            }
+def get_scheduler_address():
+    """Determine the Dask scheduler address. Defaults to Minikube port-forward if available."""
+    addr = os.getenv("DASK_SCHEDULER_ADDRESS")
+    if addr:
+        return addr
+    # Check if we can reach the default port-forwarded address
+    try:
+        with socket.create_connection(("127.0.0.1", 8786), timeout=0.1):
+            return "tcp://127.0.0.1:8786"
+    except:
+        return None
 
 
-    # ── Stage 4: Persist & Display results ────────────────────────────────────
+def run_full_pipeline_remote(sample_mode):
+    """This function runs ON THE WORKER to avoid path/os mismatches."""
+    from src.config import RAW_OCT, RAW_NOV, PARQUET_VALIDATED, RESULTS_DIR
+    from src.ingestion import load_csvs
+    from src.validation import clean_data
+    from src.storage import save_parquet_dask, save_parquet_pandas
+    from src.transformations_dask import (
+        compute_revenue_by_category, compute_conversion_funnel,
+        compute_hourly_activity, compute_session_stats, compute_top_brands
+    )
+    import dask.dataframe as dd
+    import shutil
+
+    # 1. Ingest
+    ddf = load_csvs([RAW_OCT, RAW_NOV])
+    if sample_mode:
+        ddf = ddf.partitions[:1]
+    
+    # 2. Clean & Save
+    clean_ddf = clean_data(ddf)
+    save_parquet_dask(clean_ddf, PARQUET_VALIDATED, partition_on=["event_type"], overwrite=True)
+    
+    # 3. Analyze (Re-read to ensure clean graph)
+    ddf_final = dd.read_parquet(str(PARQUET_VALIDATED))
+    results = {
+        "revenue":  compute_revenue_by_category(ddf_final),
+        "funnel":   compute_conversion_funnel(ddf_final),
+        "hourly":   compute_hourly_activity(ddf_final),
+        "sessions": compute_session_stats(ddf_final),
+        "brands":   compute_top_brands(ddf_final),
+    }
+
+    # 4. Save results to mounted output folder
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     save_parquet_pandas(results["revenue"], RESULTS_DIR / "revenue_by_category.parquet")
     save_parquet_pandas(results["funnel"],  RESULTS_DIR / "conversion_funnel.parquet")
     save_parquet_pandas(results["hourly"],  RESULTS_DIR / "hourly_activity.parquet")
     save_parquet_pandas(results["brands"],  RESULTS_DIR / "top_brands.parquet")
+    
+    session_path = RESULTS_DIR / "session_stats"
+    if session_path.exists():
+        shutil.rmtree(session_path)
+    results["sessions"].to_parquet(str(session_path), write_index=False)
 
-    # Session stats are large (millions of rows). We save them as Dask Parquet (partitioned)
-    # instead of pulling everything to the driver.
-    session_parquet_path = RESULTS_DIR / "session_stats"
-    if hasattr(results["sessions"], "to_parquet"):
-        log.info("saving_sessions_dask", path=str(session_parquet_path))
-        import shutil
-        if session_parquet_path.exists():
-            shutil.rmtree(session_parquet_path)
-        results["sessions"].to_parquet(str(session_parquet_path), write_index=False)
-        # Compute just a small sample for the display summary
-        session_sample = results["sessions"].head(10)
+    # Return summary data to client
+    return {
+        "revenue": results["revenue"],
+        "brands":  results["brands"],
+        "funnel":  results["funnel"],
+        "sessions_sample": results["sessions"].head(10)
+    }
+
+
+def main():
+    log.info("pipeline_started")
+    pipeline_start = time.time()
+    SAMPLE_MODE = True  # Set to False to run on the full dataset
+
+    # Ensure local output directories exist
+    for d in [OUTPUT_DIR, LOGS_DIR, PARQUET_VALIDATED, RESULTS_DIR]:
+        Path(d).mkdir(parents=True, exist_ok=True)
+
+    scheduler_addr = get_scheduler_address()
+    
+    if scheduler_addr:
+        log.info("remote_execution_mode", scheduler=scheduler_addr)
+        with Client(scheduler_addr) as client:
+            log.info("dask_client_connected", dashboard=client.dashboard_link)
+            results_pkg = client.submit(run_full_pipeline_remote, SAMPLE_MODE).result()
+            
+            # Unpack results for display logic
+            results = {
+                "revenue":  results_pkg["revenue"],
+                "brands":   results_pkg["brands"],
+                "funnel":   results_pkg["funnel"],
+                "sessions": results_pkg["sessions_sample"]  # We only bring the sample back
+            }
     else:
-        save_parquet_pandas(results["sessions"], session_parquet_path.with_suffix(".parquet"))
-        session_sample = results["sessions"].head(10)
+        log.info("local_execution_mode")
+        # Stage 1: Ingest
+        with log.timer("ingestion") as t:
+            raw_ddf = load_csvs([RAW_OCT, RAW_NOV])
+            if SAMPLE_MODE:
+                raw_ddf = raw_ddf.partitions[:1]
+        
+        # Stage 2: Clean & Save
+        clean_ddf = clean_data(raw_ddf)
+        save_parquet_dask(clean_ddf, PARQUET_VALIDATED, partition_on=["event_type"], overwrite=True)
+        
+        # Stage 3: Analyze
+        ddf = dd.read_parquet(str(PARQUET_VALIDATED))
+        results = {
+            "revenue":  compute_revenue_by_category(ddf),
+            "funnel":   compute_conversion_funnel(ddf),
+            "hourly":   compute_hourly_activity(ddf),
+            "sessions": compute_session_stats(ddf),
+            "brands":   compute_top_brands(ddf),
+        }
+        
+        # Stage 4: Local Save
+        save_parquet_pandas(results["revenue"], RESULTS_DIR / "revenue_by_category.parquet")
+        save_parquet_pandas(results["funnel"],  RESULTS_DIR / "conversion_funnel.parquet")
+        save_parquet_pandas(results["hourly"],  RESULTS_DIR / "hourly_activity.parquet")
+        save_parquet_pandas(results["brands"],  RESULTS_DIR / "top_brands.parquet")
+        
+        session_path = RESULTS_DIR / "session_stats"
+        import shutil
+        if session_path.exists():
+            shutil.rmtree(session_path)
+        results["sessions"].to_parquet(str(session_path), write_index=False)
+        
+        # For display consistency
+        results["sessions"] = results["sessions"].head(10)
 
     # Display results summary
     print("\n" + "="*80)
@@ -142,18 +174,16 @@ def main():
     print("\n[ Analysis 2: Top Brands by Revenue (Top 10) ]")
     print(results["brands"].head(10).to_string(index=False))
 
-    print("\n[ Analysis 3: Conversion Funnel (Top 10 Categories - Sorted by View Volume) ]")
+    print("\n[ Analysis 3: Conversion Funnel (Top 10 Categories) ]")
     print(results["funnel"].head(10).to_string(index=False))
 
     print("\n[ Analysis 4: Session Statistics (Sample) ]")
-    print(session_sample.to_string(index=False))
+    print(results["sessions"].to_string(index=False))
 
     total = round(time.time() - pipeline_start, 1)
-    log.info("pipeline_completed", total_s=total, stage_times=timings)
+    log.info("pipeline_completed", total_s=total)
     print("\n" + "="*80)
     print(f"Pipeline completed in {total}s")
-    for stage, s in timings.items():
-        print(f"  {stage:<20} {s:.1f}s")
     print("="*80)
 
 
