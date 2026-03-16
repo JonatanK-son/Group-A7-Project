@@ -1,0 +1,15 @@
+﻿* minikube v1.38.1 on Microsoft Windows 11 Home 25H2
+* Using the docker driver based on existing profile
+
+minikube : X Exiting due to PROVIDER_DOCKER_VERSION_EXIT_1: "docker version --format <no value>-<no value>:<no value>" exit status 1: failed to connect 
+to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine; check if the path is correct and if the daemon is running: open 
+//./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified.
+At line:1 char:1
++ minikube start 2>&1 | Out-String | Set-Content -Encoding UTF8 minikub ...
++ ~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (X Exiting due t...file specified.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+* Documentation: https://minikube.sigs.k8s.io/docs/drivers/docker/
+
+

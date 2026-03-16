@@ -41,6 +41,10 @@ def main():
     log.info("pipeline_started")
     timings: dict[str, float] = {}
     pipeline_start = time.time()
+<<<<<<< Updated upstream
+=======
+    SAMPLE_MODE = False  # Set to False to run on the full dataset
+>>>>>>> Stashed changes
 
     # ── Stage 1: Ingest ───────────────────────────────────────────────────────
     with log.timer("ingestion") as t:

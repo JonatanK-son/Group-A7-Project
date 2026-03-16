@@ -16,6 +16,14 @@ def save_parquet_dask(
 ) -> None:
     """Write a Dask DataFrame to a Parquet dataset directory."""
     path = Path(path)
+<<<<<<< Updated upstream
+=======
+    if overwrite and path.exists():
+        log.info("clearing_existing_directory", path=str(path))
+        import shutil
+        shutil.rmtree(path, ignore_errors=True)
+    
+>>>>>>> Stashed changes
     path.mkdir(parents=True, exist_ok=True)
     log.info("saving_parquet_dask", path=str(path))
     kwargs = {"partition_on": partition_on} if partition_on else {}
