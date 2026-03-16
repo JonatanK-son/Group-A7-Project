@@ -1,3 +1,20 @@
+Metadata-Version: 2.4
+Name: group-a7-project
+Version: 0.1.0
+Summary: E-commerce behavior data pipeline
+Requires-Python: >=3.12
+Description-Content-Type: text/markdown
+Requires-Dist: bokeh>=3.9.0
+Requires-Dist: dask[dataframe,distributed]==2026.1.2
+Requires-Dist: fastparquet>=2023.1.0
+Requires-Dist: fsspec>=2023.1.0
+Requires-Dist: httpx>=0.28.1
+Requires-Dist: numpy==2.2.6
+Requires-Dist: pandas==2.3.3
+Requires-Dist: pyarrow==23.0.1
+Requires-Dist: pyspark>=3.4.0
+Requires-Dist: tqdm>=4.67.1
+
 # E-Commerce Behaviour Pipeline — Group A7
 
 Multi-stage distributed data pipeline processing **~14.6 GB** of e-commerce event data using **Dask** and **Apache Spark**, deployable to a local Minikube cluster.
@@ -60,17 +77,7 @@ For more details, see [docs/data.md](docs/data.md).
 
 ---
 
-### Using just (recommended)
- 
-If you have [just](https://github.com/casey/just) installed:
- 
-```bash
-just sync
-just data-sample
-just pipeline
-```
- 
-### Using uv directly
+## Quick Start (local)
  
 ```bash
 # 1. Install uv (if not already installed)

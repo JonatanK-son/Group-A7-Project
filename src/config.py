@@ -18,6 +18,14 @@ LOGS_DIR     = PROJECT_ROOT / "logs"
 RAW_OCT = DATA_DIR / "2019-Oct.csv"
 RAW_NOV = DATA_DIR / "2019-Nov.csv"
 
+def get_available_data_paths() -> list[Path]:
+    """Discover all existing e-commerce CSVs in the data directory."""
+    paths = []
+    for p in [RAW_OCT, RAW_NOV]:
+        if p.exists():
+            paths.append(p)
+    return paths
+
 # ── Storage paths ─────────────────────────────────────────────────────────────
 PARQUET_VALIDATED = OUTPUT_DIR / "parquet" / "validated"
 RESULTS_DIR       = OUTPUT_DIR / "results"
