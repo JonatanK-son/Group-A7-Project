@@ -139,26 +139,25 @@ def compute_session_stats(ddf: dd.DataFrame) -> pd.DataFrame:
     # scheduler='threads' bypasses the distributed scheduler and its automatic
     # repartition(npartitions=1) step, which would OOM a worker with the full result.
     # The threads scheduler concatenates partitions directly in the driver process.
-    log.info("session_stats_phase1_started")
-    partial = ddf.map_partitions(_per_partition).compute(scheduler='threads')
-    log.info("session_stats_phase1_done", partial_rows=len(partial))
-
-    # Phase 2: re-aggregate partial results in pandas (small relative to raw data)
+    log.info("session_stats_started")
+    # Native Dask aggregation is more memory efficient on a cluster.
+    # We return the Dask DataFrame (lazy) to avoid OOM on the driver/scheduler.
     agg = (
-        partial
-        .groupby("user_session", sort=False)
-        .agg(
-            session_start=("session_start", "min"),
-            session_end=("session_end", "max"),
-            num_events=("num_events", "sum"),
-            total_spend=("total_spend", "sum"),
-        )
-        .reset_index()
+        ddf.groupby("user_session")
+        .agg({
+            "event_time": ["min", "max"],
+            "product_id": "count",
+            "price": "sum"
+        })
     )
+    
+    # Flatten multi-index columns lazily
+    agg.columns = ["session_start", "session_end", "num_events", "total_spend"]
+    agg = agg.reset_index()
+    
     agg["session_duration_min"] = (
         (agg["session_end"] - agg["session_start"]).dt.total_seconds() / 60
     )
-    log.info("session_stats_done", sessions=len(agg))
     return agg
 
 

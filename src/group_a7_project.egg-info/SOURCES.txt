@@ -1,0 +1,16 @@
+README.md
+pyproject.toml
+src/__init__.py
+src/config.py
+src/ingestion.py
+src/logger.py
+src/storage.py
+src/transformations_dask.py
+src/transformations_spark.py
+src/validation.py
+src/group_a7_project.egg-info/PKG-INFO
+src/group_a7_project.egg-info/SOURCES.txt
+src/group_a7_project.egg-info/dependency_links.txt
+src/group_a7_project.egg-info/entry_points.txt
+src/group_a7_project.egg-info/requires.txt
+src/group_a7_project.egg-info/top_level.txt

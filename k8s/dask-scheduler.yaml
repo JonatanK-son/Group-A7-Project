@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: dask-scheduler
-          image: ecom-pipeline:dev
+          image: ecom-pipeline:dev-v6
           imagePullPolicy: Never          # built locally with Minikube
           command: ["dask", "scheduler"]
           ports:
@@ -25,11 +25,11 @@ spec:
             - containerPort: 8787         # dashboard
           resources:
             requests:
-              memory: "512Mi"
-              cpu:    "250m"
-            limits:
               memory: "1Gi"
               cpu:    "500m"
+            limits:
+              memory: "2Gi"
+              cpu:    "1000m"
 ---
 apiVersion: v1
 kind: Service
