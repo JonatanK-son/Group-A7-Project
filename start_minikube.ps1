@@ -26,12 +26,8 @@ kubectl apply -f k8s/dask-worker.yaml
 Write-Host "Waiting for Dask Scheduler to be ready..." -ForegroundColor Yellow
 kubectl wait --for=condition=ready pod -l app=dask-scheduler --timeout=120s
 
-# 6. Run the pipeline job
-Write-Host "`n[6/7] Applying pipeline job..." -ForegroundColor Green
-kubectl apply -f k8s/pipeline-job.yaml
-
-# 7. Port forward the dashboard and scheduler
-Write-Host "`n[7/7] Port-forwarding Dask dashboard (8787) and scheduler (8786) (Opening in new windows)..." -ForegroundColor Green
+# 6. Port forward the dashboard and scheduler
+Write-Host "`n[6/6] Port-forwarding Dask dashboard (8787) and scheduler (8786) (Opening in new windows)..." -ForegroundColor Green
 Start-Process kubectl -WindowStyle Hidden -ArgumentList "port-forward svc/dask-scheduler 8787:8787"
 Start-Process kubectl -WindowStyle Hidden -ArgumentList "port-forward svc/dask-scheduler 8786:8786"
 
