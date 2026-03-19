@@ -66,40 +66,57 @@ def run_full_pipeline_remote(sample_mode):
     ddf = load_csvs([RAW_OCT, RAW_NOV])
     if sample_mode:
         ddf = ddf.partitions[:1]
-    
+
     # 2. Clean & Save
     clean_ddf = clean_data(ddf)
     save_parquet_dask(clean_ddf, PARQUET_VALIDATED, partition_on=["event_type"], overwrite=True)
-    
-    # 3. Analyze (Re-read to ensure clean graph)
-    ddf_final = dd.read_parquet(str(PARQUET_VALIDATED))
-    results = {
-        "revenue":  compute_revenue_by_category(ddf_final),
-        "funnel":   compute_conversion_funnel(ddf_final),
-        "hourly":   compute_hourly_activity(ddf_final),
-        "sessions": compute_session_stats(ddf_final),
-        "brands":   compute_top_brands(ddf_final),
-    }
+    del clean_ddf, ddf  # release ingestion graph before analysis
 
-    # 4. Save results to mounted output folder
+    # 3. Analyze — compute and SAVE ONE AT A TIME to bound peak worker memory.
+    #    Each step reads a fresh Dask graph, triggers compute, persists the result,
+    #    and explicitly deletes the DataFrame before the next step begins.
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    save_parquet_pandas(results["revenue"], RESULTS_DIR / "revenue_by_category.parquet")
-    save_parquet_pandas(results["funnel"],  RESULTS_DIR / "conversion_funnel.parquet")
-    save_parquet_pandas(results["hourly"],  RESULTS_DIR / "hourly_activity.parquet")
-    save_parquet_pandas(results["brands"],  RESULTS_DIR / "top_brands.parquet")
-    
+    summary = {}
+
+    # ── 3a. Revenue by category ───────────────────────────────────────────────
+    ddf_a = dd.read_parquet(str(PARQUET_VALIDATED))
+    revenue = compute_revenue_by_category(ddf_a)
+    save_parquet_pandas(revenue, RESULTS_DIR / "revenue_by_category.parquet")
+    summary["revenue"] = revenue
+    del ddf_a, revenue
+
+    # ── 3b. Conversion funnel ────────────────────────────────────────────────
+    ddf_a = dd.read_parquet(str(PARQUET_VALIDATED))
+    funnel = compute_conversion_funnel(ddf_a)
+    save_parquet_pandas(funnel, RESULTS_DIR / "conversion_funnel.parquet")
+    summary["funnel"] = funnel
+    del ddf_a, funnel
+
+    # ── 3c. Hourly activity ──────────────────────────────────────────────────
+    ddf_a = dd.read_parquet(str(PARQUET_VALIDATED))
+    hourly = compute_hourly_activity(ddf_a)
+    save_parquet_pandas(hourly, RESULTS_DIR / "hourly_activity.parquet")
+    del ddf_a, hourly  # not needed in summary
+
+    # ── 3d. Session statistics (map-reduce, no shuffle) ──────────────────────
+    ddf_a = dd.read_parquet(str(PARQUET_VALIDATED))
+    sessions = compute_session_stats(ddf_a)
     session_path = RESULTS_DIR / "session_stats"
     if session_path.exists():
         shutil.rmtree(session_path)
-    results["sessions"].to_parquet(str(session_path), write_index=False)
+    sessions.to_parquet(str(session_path), index=False)
+    summary["sessions_sample"] = sessions.head(10)
+    del ddf_a, sessions
 
-    # Return summary data to client
-    return {
-        "revenue": results["revenue"],
-        "brands":  results["brands"],
-        "funnel":  results["funnel"],
-        "sessions_sample": results["sessions"].head(10)
-    }
+    # ── 3e. Top brands ───────────────────────────────────────────────────────
+    ddf_a = dd.read_parquet(str(PARQUET_VALIDATED))
+    brands = compute_top_brands(ddf_a)
+    save_parquet_pandas(brands, RESULTS_DIR / "top_brands.parquet")
+    summary["brands"] = brands
+    del ddf_a, brands
+
+    # Return a small summary dict to the client (only small pandas DataFrames)
+    return summary
 
 
 def main():
