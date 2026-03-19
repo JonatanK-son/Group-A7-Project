@@ -1,0 +1,64 @@
+# Spark Master — Deployment + Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spark-master
+  labels:
+    app: spark-master
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: spark-master
+  template:
+    metadata:
+      labels:
+        app: spark-master
+    spec:
+      containers:
+        - name: spark-master
+          image: bitnami/spark:3.4
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: SPARK_MODE
+              value: master
+          ports:
+            - containerPort: 7077         # master
+            - containerPort: 8080         # dashboard
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu:    "500m"
+            limits:
+              memory: "2Gi"
+              cpu:    "1000m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spark-master
+spec:
+  selector:
+    app: spark-master
+  ports:
+    - name: spark
+      port: 7077
+      targetPort: 7077
+    - name: dashboard
+      port: 8080
+      targetPort: 8080
+  type: ClusterIP
+---
+# Expose dashboard via NodePort for Minikube access
+apiVersion: v1
+kind: Service
+metadata:
+  name: spark-dashboard
+spec:
+  selector:
+    app: spark-master
+  ports:
+    - port: 8080
+      targetPort: 8080
+      nodePort: 30808
+  type: NodePort

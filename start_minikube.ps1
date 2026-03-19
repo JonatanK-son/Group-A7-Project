@@ -43,23 +43,29 @@ Write-Host "`n[4/6] Mounting ./data to /data inside Minikube (Opening in new win
 Start-Process minikube -ArgumentList "mount ./data:/data"
 Start-Sleep -Seconds 3
 
-# 5. Deploy Dask scheduler + workers
-Write-Host "`n[5/6] Deploying Dask scheduler and workers..." -ForegroundColor Green
+# 5. Deploy Dask & Spark clusters
+Write-Host "`n[5/6] Deploying Dask and Spark clusters..." -ForegroundColor Green
 kubectl apply -f k8s/dask-scheduler.yaml
 kubectl apply -f k8s/dask-worker.yaml
+kubectl apply -f k8s/spark-master.yaml
+kubectl apply -f k8s/spark-worker.yaml
 
-# Wait for Dask to be ready before starting the job (good practice)
-Write-Host "Waiting for Dask Scheduler to be ready..." -ForegroundColor Yellow
+# Wait for schedulers to be ready
+Write-Host "Waiting for Dask and Spark to be ready..." -ForegroundColor Yellow
 kubectl wait --for=condition=ready pod -l app=dask-scheduler --timeout=120s
+kubectl wait --for=condition=ready pod -l app=spark-master --timeout=120s
 
-# 6. Port forward the dashboard and scheduler
-Write-Host "`n[6/6] Port-forwarding Dask dashboard (8787) and scheduler (8786) (Opening in new windows)..." -ForegroundColor Green
+# 6. Port forward dashboards and schedulers
+Write-Host "`n[6/6] Port-forwarding dashboards and schedulers (Opening in new windows)..." -ForegroundColor Green
 Start-Process kubectl -WindowStyle Hidden -ArgumentList "port-forward svc/dask-scheduler 8787:8787"
 Start-Process kubectl -WindowStyle Hidden -ArgumentList "port-forward svc/dask-scheduler 8786:8786"
+Start-Process kubectl -WindowStyle Hidden -ArgumentList "port-forward svc/spark-master 8080:8080"
 
 Write-Host "`n=== Setup Complete ===" -ForegroundColor Cyan
 Write-Host "Useful commands:"
 Write-Host "  Watch pods:      kubectl get pods -w"
 Write-Host "  Stream logs:     kubectl logs -f job/ecom-pipeline-job"
-Write-Host "  Dashboard URL:   http://localhost:8787"
-Write-Host "  Scheduler URL:   tcp://localhost:8786"
+Write-Host "  Dask Dashboard:  http://localhost:8787"
+Write-Host "  Dask Scheduler:  tcp://localhost:8786"
+Write-Host "  Spark Dashboard: http://localhost:8080"
+Write-Host "  Spark Master:    spark://localhost:7077"

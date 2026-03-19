@@ -69,23 +69,29 @@ echo -e "\n${GREEN}[4/6] Mounting ./data to /data inside Minikube...${NC}"
 minikube mount ./data:/data &
 sleep 3
 
-# 5. Deploy Dask scheduler + workers
-echo -e "\n${GREEN}[5/6] Deploying Dask scheduler and workers...${NC}"
+# 5. Deploy Dask & Spark clusters
+echo -e "\n${GREEN}[5/6] Deploying Dask and Spark clusters...${NC}"
 kubectl apply -f k8s/dask-scheduler.yaml
 kubectl apply -f k8s/dask-worker.yaml
+kubectl apply -f k8s/spark-master.yaml
+kubectl apply -f k8s/spark-worker.yaml
 
-# Wait for Dask to be ready before starting the job
-echo -e "${YELLOW}Waiting for Dask Scheduler to be ready...${NC}"
+# Wait for schedulers to be ready
+echo -e "${YELLOW}Waiting for Dask and Spark to be ready...${NC}"
 kubectl wait --for=condition=ready pod -l app=dask-scheduler --timeout=120s
+kubectl wait --for=condition=ready pod -l app=spark-master --timeout=120s
 
-# 6. Port forward the dashboard and scheduler
-echo -e "\n${GREEN}[6/6] Port-forwarding Dask dashboard (8787) and scheduler (8786)...${NC}"
+# 6. Port forward dashboards and schedulers
+echo -e "\n${GREEN}[6/6] Port-forwarding dashboards and schedulers...${NC}"
 kubectl port-forward svc/dask-scheduler 8787:8787 > /dev/null 2>&1 &
 kubectl port-forward svc/dask-scheduler 8786:8786 > /dev/null 2>&1 &
+kubectl port-forward svc/spark-master 8080:8080 > /dev/null 2>&1 &
 
 echo -e "\n${CYAN}=== Setup Complete ===${NC}"
 echo "Useful commands:"
 echo "  Watch pods:      kubectl get pods -w"
 echo "  Stream logs:     kubectl logs -f job/ecom-pipeline-job"
-echo "  Dashboard URL:   http://localhost:8787"
-echo "  Scheduler URL:   tcp://localhost:8786"
+echo "  Dask Dashboard:  http://localhost:8787"
+echo "  Dask Scheduler:  tcp://localhost:8786"
+echo "  Spark Dashboard: http://localhost:8080"
+echo "  Spark Master:    spark://localhost:7077"
