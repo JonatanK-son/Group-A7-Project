@@ -125,7 +125,7 @@ def run_analysis_remote():
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    """     # ── 1. Revenue by category ────────────────────────────────────────────────
+    # ── 1. Revenue by category ────────────────────────────────────────────────
     ddf_a = dd.read_parquet(str(PARQUET_VALIDATED))
     revenue = compute_revenue_by_category(ddf_a)
     save_parquet_pandas(revenue, RESULTS_DIR / "revenue_by_category.parquet")
@@ -144,7 +144,7 @@ def run_analysis_remote():
     hourly = compute_hourly_activity(ddf_a)
     save_parquet_pandas(hourly, RESULTS_DIR / "hourly_activity.parquet")
     del ddf_a, hourly
-    gc.collect() """
+    gc.collect()
 
     # ── 4. Session statistics (Checkpoint Pattern) ────────────────────────────
     # Step 4a: Phase 1 partial reduction saved to disk to clear memory
