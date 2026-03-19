@@ -1,4 +1,4 @@
-FROM python:3.10-slim
+FROM python:3.12-slim
 
 WORKDIR /app
 
@@ -13,4 +13,4 @@ COPY pipeline/  pipeline/
 
 ENV PYTHONPATH=/app
 
-CMD ["python", "pipeline/run_pipeline.py"]
+CMD ["python", "pipeline/run_pipeline_dask.py"]

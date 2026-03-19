@@ -1,10 +1,10 @@
-# Pipeline Job — runs run_pipeline.py once then exits
+# Pipeline Job (Spark)
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: ecom-pipeline-job
+  name: ecom-pipeline-job-spark
 spec:
-  backoffLimit: 2           # retry up to 2 times on failure
+  backoffLimit: 2
   template:
     spec:
       restartPolicy: OnFailure
@@ -12,10 +12,8 @@ spec:
         - name: pipeline
           image: ecom-pipeline:dev
           imagePullPolicy: Never
-          command: ["python", "pipeline/run_pipeline.py"]
+          command: ["python", "pipeline/run_pipeline_spark.py"]
           env:
-            - name: DASK_SCHEDULER_ADDRESS
-              value: "tcp://dask-scheduler:8786"
             - name: PYTHONPATH
               value: /app
           resources:
