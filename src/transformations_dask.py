@@ -99,21 +99,28 @@ def compute_hourly_activity(ddf: dd.DataFrame) -> pd.DataFrame:
 
 # ── Analysis 4: Session statistics (map-reduce, shuffle-free) ────────────────
 
+# ── Analysis 4: Session statistics (chunked map-reduce, shuffle-free) ────────
+
 def compute_session_stats(ddf: dd.DataFrame) -> pd.DataFrame:
     """
-    Per-session aggregation using a two-phase map-reduce pattern that avoids
-    any cross-partition shuffle (which OOMs on millions of unique session UUIDs).
-
-    Phase 1 — map   : groupby within each partition independently (no data movement)
-    Phase 2 — reduce: re-aggregate the partial results entirely in pandas
-
+    Per-session aggregation using a true two-phase map-reduce pattern:
+    
+    Phase 1: Each partition aggregates locally (no shuffle, no network I/O)
+    Phase 2: Results are merged in pandas (on driver, memory-bounded by # unique sessions)
+    
     Derived columns:
-      session_start / session_end    min/max event_time
-      num_events                     total event count across all partitions
-      total_spend                    sum of all prices in the session
-      session_duration_min           wall-clock session length in minutes
+      session_start    min event_time
+      session_end      max event_time
+      num_events       total event count
+      total_spend      sum of all prices
+      session_duration_min  wall-clock session length
+    
+    ⚠️ KEY OPTIMIZATION: 
+    - Uses map_partitions() to avoid cross-partition shuffle (OOM killer for millions of sessions)
+    - Returns early results to driver, not a massive Dask object
     """
     def _per_partition(df: pd.DataFrame) -> pd.DataFrame:
+        """Local groupby within a single partition — no network overhead."""
         if df.empty:
             return pd.DataFrame(
                 columns=["user_session", "session_start", "session_end",
@@ -130,6 +137,7 @@ def compute_session_stats(ddf: dd.DataFrame) -> pd.DataFrame:
             .reset_index()
         )
 
+<<<<<<< Updated upstream
     # Phase 1: each partition processed independently, no shuffle.
     # scheduler='threads' bypasses the distributed scheduler and its automatic
     # repartition(npartitions=1) step, which would OOM a worker with the full result.
@@ -155,6 +163,53 @@ def compute_session_stats(ddf: dd.DataFrame) -> pd.DataFrame:
     )
     log.info("session_stats_done", sessions=len(agg))
     return agg
+=======
+    log.info("session_stats_started")
+    
+    # Phase 1: Each partition local aggregation (no shuffle)
+    # map_partitions avoids any data shuffling across workers
+    partitions = ddf.map_partitions(
+        _per_partition,
+        meta=pd.DataFrame(
+            columns=["user_session", "session_start", "session_end",
+                     "num_events", "total_spend"]
+        ),
+        clear_divisions=False
+    )
+    
+    # Phase 2: Compute all local results and re-merge in pandas (safe on driver)
+    # This is memory-safe because uniqueness is constrained by unique sessions per partition
+    log.info("computing_session_partitions")
+    local_results = partitions.compute()
+    
+    if local_results.empty:
+        log.warning("session_stats_empty")
+        return local_results
+    
+    # Re-aggregate the partial results from all partitions
+    log.info("finalizing_session_aggregation", partial_rows=len(local_results))
+    final_agg = (
+        local_results.groupby("user_session", sort=False)
+        .agg({
+            "session_start": "min",
+            "session_end": "max",
+            "num_events": "sum",
+            "total_spend": "sum",
+        })
+        .reset_index()
+    )
+    
+    # Calculate session duration
+    final_agg["session_duration_min"] = (
+        (final_agg["session_end"] - final_agg["session_start"]).dt.total_seconds() / 60
+    )
+    
+    # Sort by duration (most interesting sessions first)
+    final_agg = final_agg.sort_values("session_duration_min", ascending=False).reset_index(drop=True)
+    
+    log.info("session_stats_done", unique_sessions=len(final_agg))
+    return final_agg
+>>>>>>> Stashed changes
 
 
 # ── Analysis 5: Top brands by purchase revenue (filter + aggregate) ───────────
