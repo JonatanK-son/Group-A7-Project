@@ -167,14 +167,18 @@ def run_analysis_remote():
     partial_ddf = dd.read_parquet(str(checkpoint_path))
     sessions_lazy = (
         partial_ddf.groupby("user_session")
-        .agg({"session_start":"min", "session_end":"max", "num_events":"sum", "total_spend":"sum"}, split_out=8)
+        .agg({"session_start":"min", "session_end":"max", "num_events":"sum", "total_spend":"sum"}, split_out=16)
         .reset_index()
     )
     sessions_lazy["session_duration_min"] = (sessions_lazy["session_end"] - sessions_lazy["session_start"]).dt.total_seconds() / 60
     
-    sessions = sessions_lazy.compute()
-    save_parquet_pandas(sessions, RESULTS_DIR / "session_stats.parquet")
-    del partial_ddf, sessions, sessions_lazy
+    # Save directly to disk from workers; NEVER .compute() back to a single worker's memory
+    final_path = RESULTS_DIR / "session_stats.parquet"
+    if final_path.exists():
+        if final_path.is_file(): final_path.unlink()
+        else: shutil.rmtree(final_path)
+    sessions_lazy.to_parquet(str(final_path))
+    del partial_ddf, sessions_lazy
     gc.collect()
 
     # ── 5. Top brands ─────────────────────────────────────────────────────────
@@ -209,7 +213,7 @@ def _run_analysis_local():
     ddf_a = dd.read_parquet(str(PARQUET_VALIDATED))
     hourly = compute_hourly_activity(ddf_a)
     save_parquet_pandas(hourly, RESULTS_DIR / "hourly_activity.parquet")
-    del ddf_a
+    del ddf_a 
 
     # ── 4. Session statistics ─────────────────────────────────────────────────
     ddf_a = dd.read_parquet(str(PARQUET_VALIDATED))
@@ -227,15 +231,19 @@ def _run_analysis_local():
     del ddf_a, partial_ddf
 
     partial_ddf = dd.read_parquet(str(checkpoint_path))
-    sessions = (
+    sessions_lazy = (
         partial_ddf.groupby("user_session")
         .agg({"session_start":"min", "session_end":"max", "num_events":"sum", "total_spend":"sum"})
-        .compute()
+        .reset_index()
     )
-    sessions["session_duration_min"] = (sessions["session_end"] - sessions["session_start"]).dt.total_seconds() / 60
+    sessions_lazy["session_duration_min"] = (sessions_lazy["session_end"] - sessions_lazy["session_start"]).dt.total_seconds() / 60
     
-    save_parquet_pandas(sessions, RESULTS_DIR / "session_stats.parquet")
-    del partial_ddf
+    final_path = RESULTS_DIR / "session_stats.parquet"
+    if final_path.exists():
+        if final_path.is_file(): final_path.unlink()
+        else: shutil.rmtree(final_path)
+    sessions_lazy.to_parquet(str(final_path))
+    del partial_ddf, sessions_lazy
 
     ddf_a = dd.read_parquet(str(PARQUET_VALIDATED))
     brands = compute_top_brands(ddf_a)
@@ -246,7 +254,7 @@ def _run_analysis_local():
         "revenue":  revenue,
         "funnel":   funnel,
         "brands":   brands,
-        "sessions": sessions.head(10),
+        "sessions": pd.read_parquet(RESULTS_DIR / "session_stats.parquet").head(10),
     }
 
 
