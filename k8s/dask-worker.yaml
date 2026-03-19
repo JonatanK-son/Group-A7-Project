@@ -1,4 +1,6 @@
 # Dask Workers — Deployment (scale replicas for more parallelism)
+# Workers only need the ./output mount — raw CSVs are ingested locally
+# before the pipeline runs and workers read validated Parquet from /app/output.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -38,15 +40,9 @@ spec:
               memory: "4Gi"
               cpu:    "2000m"
           volumeMounts:
-            - name: data-volume
-              mountPath: /app/data
             - name: output-volume
               mountPath: /app/output
       volumes:
-        - name: data-volume
-          hostPath:
-            path: /data
-            type: Directory
         - name: output-volume
           hostPath:
             path: /output

@@ -64,9 +64,11 @@ eval $(minikube docker-env)
 echo -e "\n${GREEN}[3/6] Building Docker image 'ecom-pipeline'...${NC}"
 docker build -t ecom-pipeline:latest -t ecom-pipeline:dev-v6 -t ecom-pipeline:dev .
 
-# 4. Mount data folder into Minikube
-echo -e "\n${GREEN}[4/6] Mounting ./data to /data inside Minikube...${NC}"
-minikube mount ./data:/data &
+# 4. Mount output folder into Minikube
+# Workers read validated Parquet from /app/output — raw CSVs are ingested
+# locally and never need to be mounted into the cluster.
+echo -e "\n${GREEN}[4/6] Mounting ./output to /output inside Minikube...${NC}"
+minikube mount ./output:/output &
 
 # Wait until the CSV files are actually visible inside Minikube before deploying.
 # minikube mount takes a few seconds to establish the 9p-fs link; polling is
@@ -76,16 +78,16 @@ MOUNT_TIMEOUT=60
 MOUNT_ELAPSED=0
 MOUNT_READY=0
 while [ $MOUNT_ELAPSED -lt $MOUNT_TIMEOUT ]; do
-    if minikube ssh "ls /data/*.csv 2>/dev/null | head -1" 2>/dev/null | grep -q ".csv"; then
+    if minikube ssh "find /output/parquet/validated -name '*.parquet' 2>/dev/null | head -1" 2>/dev/null | grep -q ".parquet"; then
         MOUNT_READY=1
-        echo -e "${GREEN}  Mount confirmed: CSV files visible at /data inside Minikube.${NC}"
+        echo -e "${GREEN}  Mount confirmed: Parquet files visible at /output/parquet/validated inside Minikube.${NC}"
         break
     fi
     sleep 2
     MOUNT_ELAPSED=$((MOUNT_ELAPSED + 2))
 done
 if [ $MOUNT_READY -eq 0 ]; then
-    echo -e "${RED}Error: Timed out waiting for minikube mount. Check that 'minikube mount ./data:/data' is still running.${NC}"
+    echo -e "${RED}Error: Timed out waiting for minikube mount. Ensure ingestion has run (Parquet exists in ./output) and that 'minikube mount ./output:/output' is still running.${NC}"
     exit 1
 fi
 

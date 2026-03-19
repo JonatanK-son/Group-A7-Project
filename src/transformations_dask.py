@@ -104,34 +104,28 @@ def compute_hourly_activity(ddf: dd.DataFrame) -> pd.DataFrame:
 
 # ── Analysis 4: Session statistics (map-reduce, shuffle-free) ────────────────
 
-def compute_session_stats(ddf: dd.DataFrame, batch_size: int = 5) -> pd.DataFrame:
+SESSION_META = pd.DataFrame({
+    "user_session":  pd.Series(dtype="object"),
+    "session_start": pd.Series(dtype="datetime64[ns]"),
+    "session_end":   pd.Series(dtype="datetime64[ns]"),
+    "num_events":    pd.Series(dtype="int64"),
+    "total_spend":   pd.Series(dtype="float64"),
+})
+
+def compute_session_stats(ddf: dd.DataFrame) -> dd.DataFrame:
     """
-    Per-session aggregation using a true two-phase map-reduce pattern that
-    avoids ALL cross-partition shuffles (which OOM workers on large datasets).
-
-    Phase 1 — map    : map_partitions() runs a groupby independently inside
-                       each partition — zero data movement between workers.
-    Phase 2 — reduce : partial results are fetched in small batches and
-                       re-aggregated entirely in pandas on the driver.
-
+    Per-session aggregation using a two-phase map-reduce pattern.
+    
+    Returns a LAZY Dask DataFrame. The caller should .compute() it.
+    
     Derived columns:
       session_start / session_end    min/max event_time
-      num_events                     total event count across all partitions
+      num_events                     total event count
       total_spend                    sum of all prices in the session
-      session_duration_min           wall-clock session length in minutes
     """
-    META = pd.DataFrame({
-        "user_session":  pd.Series(dtype="object"),
-        "session_start": pd.Series(dtype="datetime64[ns]"),
-        "session_end":   pd.Series(dtype="datetime64[ns]"),
-        "num_events":    pd.Series(dtype="int64"),
-        "total_spend":   pd.Series(dtype="float64"),
-    })
-
     def _per_partition(df: pd.DataFrame) -> pd.DataFrame:
-        """Aggregate within a single partition — no data movement."""
         if df.empty:
-            return META
+            return SESSION_META
         return (
             df.groupby("user_session", sort=False)
             .agg(
@@ -143,44 +137,28 @@ def compute_session_stats(ddf: dd.DataFrame, batch_size: int = 5) -> pd.DataFram
             .reset_index()
         )
 
-    log.info("session_stats_phase1_started", partitions=ddf.npartitions)
+    # Phase 1: Partial aggregates per partition
+    partial_ddf = ddf.map_partitions(_per_partition, meta=SESSION_META)
 
-    # Phase 1: build a lazy Dask DataFrame of per-partition partial results.
-    partial_ddf = ddf.map_partitions(_per_partition, meta=META)
-
-    # Phase 2: fetch partial results in batches to bound peak driver memory,
-    # then do a final pandas re-aggregation.
-    n = partial_ddf.npartitions
-    partial_frames: list[pd.DataFrame] = []
-    for start in range(0, n, batch_size):
-        end = min(start + batch_size, n)
-        log.info("session_stats_batch", start=start, end=end, total=n)
-        batch = partial_ddf.partitions[start:end].compute()
-        partial_frames.append(batch)
-        del batch  # release as we go
-
-    log.info("session_stats_phase2_reduce")
-    all_partials = pd.concat(partial_frames, ignore_index=True)
-    del partial_frames  # free the list
-
-    # Final re-aggregation in pandas — combines partial per-partition results.
+    # Phase 2: Global reduction
+    # We use a native Dask groupby.agg which handles the shuffle efficiently.
+    # split_out=8 helps distribute the shuffle pressure.
     agg = (
-        all_partials
-        .groupby("user_session", sort=False)
-        .agg(
-            session_start=("session_start", "min"),
-            session_end=("session_end", "max"),
-            num_events=("num_events", "sum"),
-            total_spend=("total_spend", "sum"),
-        )
+        partial_ddf
+        .groupby("user_session")
+        .agg({
+            "session_start": "min",
+            "session_end":   "max",
+            "num_events":    "sum",
+            "total_spend":   "sum",
+        }, split_out=8)
         .reset_index()
     )
-    del all_partials
-
+    
+    # Calculate duration
     agg["session_duration_min"] = (
         (agg["session_end"] - agg["session_start"]).dt.total_seconds() / 60
     )
-    log.info("session_stats_done", sessions=len(agg))
     return agg
 
 

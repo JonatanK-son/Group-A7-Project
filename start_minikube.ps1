@@ -38,30 +38,32 @@ minikube docker-env | Invoke-Expression
 Write-Host "`n[3/6] Building Docker image 'ecom-pipeline'..." -ForegroundColor Green
 docker build -t ecom-pipeline:latest -t ecom-pipeline:dev-v6 -t ecom-pipeline:dev .
 
-# 4. Mount data folder into Minikube
-Write-Host "`n[4/6] Mounting ./data to /data inside Minikube (Opening in new window)..." -ForegroundColor Green
-Start-Process minikube -ArgumentList "mount ./data:/data"
+# 4. Mount output folder into Minikube
+Write-Host "`n[4/6] Mounting ./output to /output inside Minikube (Opening in new window)..." -ForegroundColor Green
+if (!(Test-Path "./output")) { New-Item -Path "./output" -ItemType Directory -Force }
+Start-Process minikube -ArgumentList "mount ./output:/output"
 
-# Wait until the CSV files are actually visible inside Minikube before deploying.
+# Wait until the Parquet files are actually visible inside Minikube before deploying.
 # minikube mount takes a few seconds to establish the 9p-fs link; polling is
 # more reliable than a fixed sleep on slow machines.
-Write-Host "Waiting for mount to become ready inside Minikube..." -ForegroundColor Yellow
+Write-Host "Waiting for mount to become ready and Parquet files to be visible..." -ForegroundColor Yellow
 $MountTimeout = 60
 $MountElapsed = 0
 $MountReady = $false
 while ($MountElapsed -lt $MountTimeout) {
-    $check = minikube ssh "ls /data/*.csv 2>/dev/null | head -1" 2>$null
+    # Check for our marker or any parquet file. This ensures Phase 1 has run.
+    $check = minikube ssh "find /output/parquet/validated -name '*.parquet' 2>/dev/null | head -1" 2>$null
     if ($check) {
         $MountReady = $true
-        Write-Host "  Mount confirmed: CSV files visible at /data inside Minikube." -ForegroundColor Green
+        Write-Host "  Mount confirmed: Parquet files visible at /output/parquet/validated inside Minikube." -ForegroundColor Green
         break
     }
     Start-Sleep -Seconds 2
     $MountElapsed += 2
 }
 if (-not $MountReady) {
-    Write-Error "Timed out waiting for minikube mount. Check that 'minikube mount ./data:/data' is still running."
-    exit 1
+    Write-Warning "Timed out waiting for Parquet files in /output. If this is your first run, please run Phase 1 of 'run_pipeline.py' locally to generate the Parquet files, then restart this script."
+    # We don't exit here because the user might be about to run Phase 1 in another terminal
 }
 
 # 5. Deploy Dask scheduler + workers (or restart them if already running so they
