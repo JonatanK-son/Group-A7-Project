@@ -50,4 +50,4 @@ DTYPES = {
     "user_session":  "object",
 }
 
-BLOCKSIZE = "128MB"
+BLOCKSIZE = "64MB"

@@ -67,19 +67,54 @@ docker build -t ecom-pipeline:latest -t ecom-pipeline:dev-v6 -t ecom-pipeline:de
 # 4. Mount data folder into Minikube
 echo -e "\n${GREEN}[4/6] Mounting ./data to /data inside Minikube...${NC}"
 minikube mount ./data:/data &
-sleep 3
 
-# 5. Deploy Dask & Spark clusters
+# Wait until the CSV files are actually visible inside Minikube before deploying.
+# minikube mount takes a few seconds to establish the 9p-fs link; polling is
+# more reliable than a fixed sleep on slow machines.
+echo -e "${YELLOW}Waiting for mount to become ready inside Minikube...${NC}"
+MOUNT_TIMEOUT=60
+MOUNT_ELAPSED=0
+MOUNT_READY=0
+while [ $MOUNT_ELAPSED -lt $MOUNT_TIMEOUT ]; do
+    if minikube ssh "ls /data/*.csv 2>/dev/null | head -1" 2>/dev/null | grep -q ".csv"; then
+        MOUNT_READY=1
+        echo -e "${GREEN}  Mount confirmed: CSV files visible at /data inside Minikube.${NC}"
+        break
+    fi
+    sleep 2
+    MOUNT_ELAPSED=$((MOUNT_ELAPSED + 2))
+done
+if [ $MOUNT_READY -eq 0 ]; then
+    echo -e "${RED}Error: Timed out waiting for minikube mount. Check that 'minikube mount ./data:/data' is still running.${NC}"
+    exit 1
+fi
+
+# 5. Deploy Dask & Spark clusters (or restart them if already running so they
+#    pick up the now-populated hostPath volume with a fresh pod start).
 echo -e "\n${GREEN}[5/6] Deploying Dask and Spark clusters...${NC}"
 kubectl apply -f k8s/dask-scheduler.yaml
 kubectl apply -f k8s/dask-worker.yaml
 kubectl apply -f k8s/spark-master.yaml
 kubectl apply -f k8s/spark-worker.yaml
 
-# Wait for schedulers to be ready
-echo -e "${YELLOW}Waiting for Dask and Spark to be ready...${NC}"
-kubectl wait --for=condition=ready pod -l app=dask-scheduler --timeout=120s
-kubectl wait --for=condition=ready pod -l app=spark-master --timeout=120s
+# Force pods to restart so they re-bind the hostPath volume from scratch.
+# This is a no-op for brand-new deployments and fixes the race for re-runs.
+echo -e "${YELLOW}Restarting pods to ensure they bind the fresh data mount...${NC}"
+kubectl rollout restart deployment/dask-scheduler
+kubectl rollout restart deployment/dask-worker
+kubectl rollout restart deployment/spark-master
+kubectl rollout restart deployment/spark-worker
+
+# Wait for all deployments to finish rolling out before port-forwarding.
+# port-forward silently dies if the target pod isn't Ready yet.
+echo -e "${YELLOW}Waiting for Dask scheduler to be Ready...${NC}"
+kubectl rollout status deployment/dask-scheduler --timeout=120s
+echo -e "${YELLOW}Waiting for Dask workers to be Ready...${NC}"
+kubectl rollout status deployment/dask-worker --timeout=120s
+echo -e "${YELLOW}Waiting for Spark master to be Ready...${NC}"
+kubectl rollout status deployment/spark-master --timeout=120s
+echo -e "${YELLOW}Waiting for Spark workers to be Ready...${NC}"
+kubectl rollout status deployment/spark-worker --timeout=120s
 
 # 6. Port forward dashboards and schedulers
 echo -e "\n${GREEN}[6/6] Port-forwarding dashboards and schedulers...${NC}"
