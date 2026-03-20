@@ -33,10 +33,10 @@ def get_spark_session(remote: bool = False) -> SparkSession:
     # Common performance settings
     builder = (
         builder
-        .config("spark.sql.shuffle.partitions", "8")
+        .config("spark.sql.shuffle.partitions", "100")
         .config("spark.driver.memory", "1g")
-        .config("spark.executor.memory", "1g")
-        .config("spark.executor.memoryOverhead", "384")
+        .config("spark.executor.memory", "2g")
+        .config("spark.executor.memoryOverhead", "512")
         .config("spark.executor.instances", "1")
         # Standard Parquet timestamp behavior (now that we use microseconds in validation.py)
         .config("spark.sql.parquet.datetimeRebaseModeInRead", "CORRECTED")
