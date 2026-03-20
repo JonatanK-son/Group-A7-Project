@@ -1,140 +1,108 @@
-"""PySpark transformations including a window-function analysis."""
-from pyspark.sql import DataFrame, SparkSession
-from pyspark.sql import functions as F
-from pyspark.sql.window import Window
-
+"""Spark mirroring of the 5 Dask-based transformations."""
+from pyspark.sql import SparkSession, DataFrame, functions as F
 from src.logger import StructuredLogger
 
 log = StructuredLogger("spark_transforms")
 
 
-# ── Session factory ───────────────────────────────────────────────────────────
-
-def get_spark_session(app_name: str = "EcomPipeline-A7") -> SparkSession:
-    spark = (
-        SparkSession.builder
-        .appName(app_name)
-        .config("spark.sql.shuffle.partitions", "50")
-        .config("spark.driver.memory", "4g")
-        .config("spark.sql.adaptive.enabled", "true")
-        .config("spark.ui.enabled", "true")
-        .config("spark.ui.port", "4040")
-        .getOrCreate()
-    )
-    return spark
-
-
-def get_spark_dashboard_url(spark: SparkSession) -> str:
-    """Return the Spark web UI URL (e.g. http://localhost:4040)."""
-    sc = spark.sparkContext
-    ui_url = sc.uiWebUrl  # None if the UI is disabled
-    if ui_url:
-        return ui_url
-    port = sc._conf.get("spark.ui.port", "4040")
-    return f"http://localhost:{port}"
-
-
-# ── Loader ────────────────────────────────────────────────────────────────────
-
-def load_csv_spark(spark: SparkSession, path: str | list[str]) -> DataFrame:
-    """
-    Load one or more CSV files into a Spark DataFrame.
-    *path* can be a single path string or a list of path strings.
-    Forward slashes are required on Windows; convert before calling.
-    """
-    paths = path if isinstance(path, list) else [path]
-    df = (
-        spark.read
-        .option("header", "true")
-        .option("inferSchema", "true")
-        .option("timestampFormat", "yyyy-MM-dd HH:mm:ss z")
-        .option("mode", "DROPMALFORMED")
-        .csv(paths)
-    )
-    log.info("spark_csv_loaded", files=len(paths), partitions=df.rdd.getNumPartitions())
-    return df
-
-
-# ── Helper ────────────────────────────────────────────────────────────────────
-
-def _with_top_category(df: DataFrame) -> DataFrame:
+def _top_category(df: DataFrame) -> DataFrame:
     return df.withColumn(
-        "top_category",
-        F.split(F.coalesce(F.col("category_code"), F.lit("unknown")), r"\.")[0],
+        "top_category", 
+        F.coalesce(F.split(F.col("category_code"), "\.").getItem(0), F.lit("unknown"))
     )
 
 
-# ── Analysis 1: Revenue by category (filter + aggregate) ─────────────────────
+# ── Analysis 1: Revenue by category ──────────────────────────────────────────
 
-def compute_revenue_by_category_spark(df: DataFrame) -> DataFrame:
+def compute_revenue_by_category(df: DataFrame) -> DataFrame:
+    """Purchase revenue and volume grouped by top-level product category."""
+    purchases = df.filter(F.col("event_type") == "purchase")
+    with_cat = _top_category(purchases)
+    
     result = (
-        _with_top_category(df.filter(F.col("event_type") == "purchase"))
-        .groupBy("top_category")
+        with_cat.groupBy("top_category")
         .agg(
             F.sum("price").alias("total_revenue"),
             F.count("*").alias("num_purchases"),
-            F.avg("price").alias("avg_price"),
+            F.mean("price").alias("avg_price")
         )
         .orderBy(F.desc("total_revenue"))
     )
-    log.info("spark_revenue_done")
     return result
 
 
-# ── Analysis 2: Conversion funnel (pivot aggregate) ───────────────────────────
+# ── Analysis 2: Conversion funnel ─────────────────────────────────────────────
 
-def compute_conversion_funnel_spark(df: DataFrame) -> DataFrame:
-    with_cat = _with_top_category(df)
-    funnel = (
-        with_cat.groupBy("top_category", "event_type")
+def compute_conversion_funnel(df: DataFrame) -> DataFrame:
+    """View → Cart → Purchase rates per top-level category."""
+    with_cat = _top_category(df)
+    
+    # Spark is very efficient at pivots
+    pivoted = (
+        with_cat.groupBy("top_category")
+        .pivot("event_type", ["view", "cart", "purchase", "remove_from_cart"])
         .count()
-        .groupBy("top_category")
-        .pivot("event_type")
-        .sum("count")
         .fillna(0)
     )
-    funnel = funnel.withColumn(
-        "purchase_rate",
-        F.when(F.col("view") > 0, F.col("purchase") / F.col("view")).otherwise(None),
+    
+    result = pivoted.withColumn(
+        "cart_rate", F.col("cart") / F.expr("nullif(view, 0)")
     ).withColumn(
-        "cart_rate",
-        F.when(F.col("view") > 0, F.col("cart") / F.col("view")).otherwise(None),
-    )
-    log.info("spark_funnel_done")
-    return funnel
+        "purchase_rate", F.col("purchase") / F.expr("nullif(view, 0)")
+    ).orderBy(F.desc("view"))
+    
+    return result
 
 
-# ── Analysis 3: Window function — rank products within category ───────────────
+# ── Analysis 3: Hourly activity ───────────────────────────────────────────────
 
-def compute_window_rank_spark(df: DataFrame) -> DataFrame:
-    """Top-5 products by revenue within each category using a window function."""
-    product_revenue = (
-        _with_top_category(df.filter(F.col("event_type") == "purchase"))
-        .groupBy("top_category", "product_id")
-        .agg(
-            F.sum("price").alias("product_revenue"),
-            F.count("*").alias("num_sales"),
-        )
-    )
-    win = Window.partitionBy("top_category").orderBy(F.desc("product_revenue"))
-    ranked = (
-        product_revenue
-        .withColumn("rank_in_category", F.rank().over(win))
-        .filter(F.col("rank_in_category") <= 5)
-        .orderBy("top_category", "rank_in_category")
-    )
-    log.info("spark_window_rank_done")
-    return ranked
-
-
-# ── Analysis 4: Hourly activity (assign + group) ──────────────────────────────
-
-def compute_hourly_activity_spark(df: DataFrame) -> DataFrame:
+def compute_hourly_activity(df: DataFrame) -> DataFrame:
+    """Event count by hour and event type."""
+    hour_df = df.withColumn("hour", F.hour(F.col("event_time")))
+    
     result = (
-        df.withColumn("hour", F.hour(F.col("event_time")))
-        .groupBy("hour", "event_type")
+        hour_df.groupBy("hour", "event_type")
         .count()
         .orderBy("hour", "event_type")
     )
-    log.info("spark_hourly_done")
+    return result
+
+
+# ── Analysis 4: Session statistics ────────────────────────────────────────────
+
+def compute_session_stats(df: DataFrame) -> DataFrame:
+    """High-cardinality session aggregation (equivalent to Dask map-reduce)."""
+    sessions = (
+        df.groupBy("user_session")
+        .agg(
+            F.min("event_time").alias("session_start"),
+            F.max("event_time").alias("session_end"),
+            F.count("*").alias("num_events"),
+            F.sum("price").alias("total_spend")
+        )
+    )
+    
+    # Calculate duration
+    result = sessions.withColumn(
+        "session_duration_min", 
+        (F.unix_timestamp("session_end") - F.unix_timestamp("session_start")) / 60
+    )
+    return result
+
+
+# ── Analysis 5: Top brands ────────────────────────────────────────────────────
+
+def compute_top_brands(df: DataFrame, top_n: int = 20) -> DataFrame:
+    """Rank brands by purchase revenue."""
+    purchases = df.filter(F.col("event_type") == "purchase").where(F.col("brand").isNotNull())
+    
+    result = (
+        purchases.groupBy("brand")
+        .agg(
+            F.sum("price").alias("total_revenue"),
+            F.count("*").alias("num_purchases")
+        )
+        .orderBy(F.desc("total_revenue"))
+        .limit(top_n)
+    )
     return result
