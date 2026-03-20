@@ -7,8 +7,8 @@ log = StructuredLogger("spark_transforms")
 
 def _top_category(df: DataFrame) -> DataFrame:
     return df.withColumn(
-        "top_category", 
-        F.coalesce(F.split(F.col("category_code"), "\.").getItem(0), F.lit("unknown"))
+        "top_category",
+        F.coalesce(F.split(F.col("category_code"), r"\.").getItem(0), F.lit("unknown"))
     )
 
 
@@ -18,7 +18,7 @@ def compute_revenue_by_category(df: DataFrame) -> DataFrame:
     """Purchase revenue and volume grouped by top-level product category."""
     purchases = df.filter(F.col("event_type") == "purchase")
     with_cat = _top_category(purchases)
-    
+
     result = (
         with_cat.groupBy("top_category")
         .agg(

@@ -33,12 +33,15 @@ def get_spark_session(remote: bool = False) -> SparkSession:
     # Common performance settings
     builder = (
         builder
-        .config("spark.sql.shuffle.partitions", "8")   # Low for this scale
-        .config("spark.driver.memory", "1g")
-        .config("spark.executor.memory", "1g")
-        .config("spark.executor.memoryOverhead", "384")
-        .config("spark.executor.instances", "1")
+        .config("spark.sql.shuffle.partitions", "32")
+        .config("spark.driver.memory", "1024m")
+        .config("spark.executor.memory", "1536m")
+        .config("spark.kubernetes.memoryOverheadFactor", "0.2")
+        .config("spark.executor.instances", "2")
+        .config("spark.driver.port", "7077")
+        .config("spark.blockManager.port", "7078")
         .config("spark.sql.parquet.nanosAsLong", "true")
+        .config("spark.sql.legacy.parquet.nanosAsLong", "true")
         .config("spark.sql.parquet.enableVectorizedReader", "true")
         .config("spark.sql.parquet.datetimeRebaseModeInRead", "LEGACY")
         .config("spark.sql.parquet.int96RebaseModeInRead", "LEGACY")
@@ -56,7 +59,7 @@ def get_spark_session(remote: bool = False) -> SparkSession:
         builder = (
             builder
             .master(k8s_master)
-            .config("spark.kubernetes.container.image", "ecom-pipeline:latest")
+            .config("spark.kubernetes.container.image", "ecom-pipeline:dev-v6")
             .config("spark.kubernetes.container.image.pullPolicy", "IfNotPresent")
             .config("spark.kubernetes.authenticate.driver.serviceAccountName", "spark")
             .config("spark.kubernetes.namespace", "default")
@@ -69,9 +72,10 @@ def get_spark_session(remote: bool = False) -> SparkSession:
             
             # Python env in the container
             .config("spark.kubernetes.pyspark.pythonVersion", "3")
-            .config("spark.pyspark.python", "python3")
-            .config("spark.pyspark.driver.python", "python3")
+            .config("spark.pyspark.python", "/usr/local/bin/python3")
+            .config("spark.pyspark.driver.python", "/usr/local/bin/python3")
             .config("spark.executorEnv.PYTHONPATH", "/app")
+            .config("spark.executorEnv.PYSPARK_PYTHON", "/usr/local/bin/python3")
             # Ensure executors can connect back to the driver by using its IP
             .config("spark.driver.host", os.getenv("SPARK_DRIVER_BIND_ADDRESS", "localhost"))
         )
@@ -93,6 +97,10 @@ def run_analysis_spark(spark: SparkSession, validated_path: str):
     results_spark.mkdir(parents=True, exist_ok=True)
     
     df = spark.read.parquet(validated_path)
+    
+    # Global correction: Convert nanoseconds BigInt to Spark Timestamp
+    from pyspark.sql import functions as F
+    df = df.withColumn("event_time", (F.col("event_time") / 1_000_000_000).cast("timestamp"))
     
     # ── 1. Revenue by Category ────────────────────────────────────────────────
     # Use a local directory for writing to avoid chmod issues on mounted volumes
@@ -142,6 +150,10 @@ def run_analysis_spark(spark: SparkSession, validated_path: str):
 def main():
     log.info("spark_pipeline_started")
     pipeline_start = time.time()
+    
+    # Increase log level temporarily for diagnostics
+    # sc.setLogLevel is only available after context is started, using conf instead
+    pass
     
     # Detect if we are already inside K8s (Cluster/Job mode)
     in_k8s = os.getenv("KUBERNETES_SERVICE_HOST") is not None
