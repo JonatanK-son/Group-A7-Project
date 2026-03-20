@@ -30,6 +30,17 @@ spec:
             limits:
               memory: "2Gi"
               cpu:    "1000m"
+          env:
+            - name: PYTHONPATH
+              value: /app
+          volumeMounts:
+            - name: output-volume
+              mountPath: /app/output
+      volumes:
+        - name: output-volume
+          hostPath:
+            path: /output
+            type: DirectoryOrCreate
 ---
 apiVersion: v1
 kind: Service

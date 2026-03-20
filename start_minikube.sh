@@ -52,9 +52,10 @@ if [ ! -d "./data" ] || [ -z "$(find ./data -name '*.csv' 2>/dev/null)" ]; then
     uv run python scripts/download_data.py --sample
 fi
 
-# 1. Start Minikube
-echo -e "\n${GREEN}[1/6] Starting Minikube...${NC}"
-minikube start --memory=7866 --cpus=4
+# 1. Start Minikube with host mount
+echo -e "\n${GREEN}[1/6] Starting Minikube with host mount...${NC}"
+mkdir -p ./output
+minikube start --memory=7866 --cpus=4 --mount --mount-string="$(pwd)/output:/output"
 
 # 2. Point Docker at Minikube's daemon
 echo -e "\n${GREEN}[2/6] Pointing Docker to Minikube...${NC}"
@@ -64,32 +65,34 @@ eval $(minikube docker-env)
 echo -e "\n${GREEN}[3/6] Building Docker image 'ecom-pipeline'...${NC}"
 docker build -t ecom-pipeline:latest -t ecom-pipeline:dev-v6 -t ecom-pipeline:dev .
 
-# 4. Mount output folder into Minikube
-# Workers read validated Parquet from /app/output — raw CSVs are ingested
-# locally and never need to be mounted into the cluster.
-echo -e "\n${GREEN}[4/6] Mounting ./output to /output inside Minikube...${NC}"
-minikube mount ./output:/output &
+# 4. Verify mount inside Minikube
+echo -e "\n${GREEN}[4/6] Verifying mount inside Minikube...${NC}"
 
-# Wait until the CSV files are actually visible inside Minikube before deploying.
-# minikube mount takes a few seconds to establish the 9p-fs link; polling is
-# more reliable than a fixed sleep on slow machines.
-echo -e "${YELLOW}Waiting for mount to become ready inside Minikube...${NC}"
-MOUNT_TIMEOUT=60
+# Wait until the 9p mount is confirmed active in the VM.
+echo -e "${YELLOW}Waiting for mount to become active...${NC}"
+MOUNT_TIMEOUT=30
 MOUNT_ELAPSED=0
 MOUNT_READY=0
 while [ $MOUNT_ELAPSED -lt $MOUNT_TIMEOUT ]; do
-    if minikube ssh "find /output/parquet/validated -name '*.parquet' 2>/dev/null | head -1" 2>/dev/null | grep -q ".parquet"; then
+    if minikube ssh "mount | grep -q ' /output '" 2>/dev/null; then
         MOUNT_READY=1
-        echo -e "${GREEN}  Mount confirmed: Parquet files visible at /output/parquet/validated inside Minikube.${NC}"
+        echo -e "${GREEN}  Mount confirmed: /output is active inside Minikube.${NC}"
         break
     fi
     sleep 2
     MOUNT_ELAPSED=$((MOUNT_ELAPSED + 2))
 done
 if [ $MOUNT_READY -eq 0 ]; then
-    echo -e "${RED}Error: Timed out waiting for minikube mount. Ensure ingestion has run (Parquet exists in ./output) and that 'minikube mount ./output:/output' is still running.${NC}"
+    echo -e "${RED}Error: Minikube mount failed to activate. You may need to run 'minikube delete' and try again.${NC}"
     exit 1
 fi
+
+# Check for Parquet files — warn but don't exit (Phase 1 ingestion may run separately).
+if ! minikube ssh "find /output/parquet/validated -name '*.parquet' 2>/dev/null | head -1" 2>/dev/null | grep -q ".parquet"; then
+    echo -e "${YELLOW}Warning: No Parquet files found in /output/parquet/validated yet.${NC}"
+    echo -e "${YELLOW}         Run Phase 1 ingestion locally first if this is your first run.${NC}"
+fi
+
 
 # 5. Deploy Dask scheduler + workers (or restart them if already running so they
 #    pick up the now-populated hostPath volume with a fresh pod start).
@@ -103,21 +106,42 @@ echo -e "${YELLOW}Restarting pods to ensure they bind the fresh data mount...${N
 kubectl rollout restart deployment/dask-scheduler
 kubectl rollout restart deployment/dask-worker
 
-# Wait for both deployments to finish rolling out before port-forwarding.
-# port-forward silently dies if the target pod isn't Ready yet.
+# Wait for both deployments to finish rolling out.
 echo -e "${YELLOW}Waiting for Dask scheduler to be Ready...${NC}"
 kubectl rollout status deployment/dask-scheduler --timeout=120s
 echo -e "${YELLOW}Waiting for Dask workers to be Ready...${NC}"
 kubectl rollout status deployment/dask-worker --timeout=120s
 
-# 6. Port forward the dashboard and scheduler
+# 6. Port forward the dashboard and scheduler with a robust restart loop
 echo -e "\n${GREEN}[6/6] Port-forwarding Dask dashboard (8787) and scheduler (8786)...${NC}"
-kubectl port-forward svc/dask-scheduler 8787:8787 > /dev/null 2>&1 &
-kubectl port-forward svc/dask-scheduler 8786:8786 > /dev/null 2>&1 &
+# Kill existing port-forwards to avoid conflict
+pkill -f "port-forward svc/dask-scheduler" || true
+
+# Run port-forwards in a while loop so they reconnect if they get dropped
+(while true; do kubectl port-forward svc/dask-scheduler 8787:8787; sleep 2; done) > /dev/null 2>&1 &
+(while true; do kubectl port-forward svc/dask-scheduler 8786:8786; sleep 2; done) > /dev/null 2>&1 &
+
+# Wait for port-forwarding to be ready
+echo -e "${YELLOW}Waiting for port-forwarding to be ready...${NC}"
+PF_TIMEOUT=30
+PF_ELAPSED=0
+PF_READY=0
+while [ $PF_ELAPSED -lt $PF_TIMEOUT ]; do
+    if (echo > /dev/tcp/localhost/8786) >/dev/null 2>&1 && (echo > /dev/tcp/localhost/8787) >/dev/null 2>&1; then
+        PF_READY=1
+        echo -e "${GREEN}  Port-forwarding confirmed: 8786 and 8787 are listening.${NC}"
+        break
+    fi
+    sleep 2
+    PF_ELAPSED=$((PF_ELAPSED + 2))
+done
+if [ $PF_READY -eq 0 ]; then
+    echo -e "${RED}Warning: Port-forwarding might not be ready. Check background processes with 'ps aux | grep port-forward'.${NC}"
+fi
 
 echo -e "\n${CYAN}=== Setup Complete ===${NC}"
 echo "Useful commands:"
 echo "  Watch pods:      kubectl get pods -w"
-echo "  Stream logs:     kubectl logs -f job/ecom-pipeline-job"
+echo "  Stream logs:     kubectl logs -f deployment/dask-worker"
 echo "  Dashboard URL:   http://localhost:8787"
 echo "  Scheduler URL:   tcp://localhost:8786"
