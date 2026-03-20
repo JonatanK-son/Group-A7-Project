@@ -12,6 +12,6 @@ kubectl rollout status deployment dask-worker
 
 # 3. Running the pipeline
 echo -e "\033[0;32mStarting Dask pipeline...\033[0m"
-python3 ./pipeline/run_pipeline.py
+./.venv/bin/python ./pipeline/run_pipeline.py
 
 echo -e "\033[0;36m\nDask run completed.\033[0m"

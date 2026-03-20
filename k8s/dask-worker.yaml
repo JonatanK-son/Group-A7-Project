@@ -26,19 +26,19 @@ spec:
             - worker
             - tcp://dask-scheduler:8786
             - --nthreads
-            - "2"
+            - "1"
             - --memory-limit
-            - "3GB"
+            - "2GB"
           env:
             - name: PYTHONPATH
               value: /app
           resources:
             requests:
+              memory: "1.5Gi"
+              cpu:    "500m"
+            limits:
               memory: "2Gi"
               cpu:    "1000m"
-            limits:
-              memory: "3Gi"
-              cpu:    "1500m"
           volumeMounts:
             - name: output-volume
               mountPath: /app/output

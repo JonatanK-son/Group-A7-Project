@@ -55,7 +55,7 @@ fi
 # 1. Start Minikube with host mount
 echo -e "\n${GREEN}[1/6] Starting Minikube with host mount...${NC}"
 mkdir -p ./output
-minikube start --memory=7866 --cpus=4 --mount --mount-string="$(pwd)/output:/output"
+minikube start --memory=6144 --cpus=4 --mount --mount-string="$(pwd)/output:/output"
 
 # 2. Point Docker at Minikube's daemon
 echo -e "\n${GREEN}[2/6] Pointing Docker to Minikube...${NC}"
