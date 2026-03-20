@@ -17,8 +17,17 @@ Write-Host "Waiting for Spark driver to start and show results..." -ForegroundCo
 kubectl wait --for=condition=Ready pod -l job-name=spark-pipeline-job --timeout=60s
 
 # Automatic Port-Forward for Spark UI (Port 4040)
-Start-Process kubectl -WindowStyle Hidden -ArgumentList "port-forward job/spark-pipeline-job 4040:4040"
-Write-Host "Spark Dashboard: http://localhost:4040" -ForegroundColor Cyan
+# First, try to kill any dangling port-forward on 4040 to avoid "address already in use" errors.
+Get-Process kubectl -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*port-forward*4040:4040*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+
+Write-Host "Establishing port-forward to Spark UI..." -ForegroundColor Yellow
+$SparkPod = kubectl get pods -l job-name=spark-pipeline-job --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}'
+if ($SparkPod) {
+    Start-Process kubectl -WindowStyle Hidden -ArgumentList "port-forward pod/$SparkPod 4040:4040"
+    Write-Host "Spark Dashboard: http://localhost:4040" -ForegroundColor Cyan
+} else {
+    Write-Warning "No running Spark pod found for port-forwarding."
+}
 
 kubectl logs -f job/spark-pipeline-job
 

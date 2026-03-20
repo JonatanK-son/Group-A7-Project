@@ -43,6 +43,9 @@ def get_spark_session(remote: bool = False) -> SparkSession:
         .config("spark.sql.parquet.int96RebaseModeInRead", "CORRECTED")
         .config("spark.hadoop.fs.permissions.umask-mode", "000")
         .config("spark.hadoop.mapreduce.fileoutputcommitter.algorithm.version", "2")
+        .config("spark.ui.enabled", "true")
+        .config("spark.ui.port", "4040")
+        .config("spark.driver.bindAddress", "0.0.0.0")
     )
     
     if remote:

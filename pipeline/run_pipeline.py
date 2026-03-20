@@ -266,7 +266,7 @@ def _run_analysis_local():
 def main():
     log.info("pipeline_started")
     pipeline_start = time.time()
-    SAMPLE_MODE = True  # Set to True for fast iteration during debugging
+    SAMPLE_MODE = False  # Set to True for fast iteration during debugging
 
     # Ensure local output directories exist
     for d in [OUTPUT_DIR, LOGS_DIR, PARQUET_VALIDATED, RESULTS_DIR]:
