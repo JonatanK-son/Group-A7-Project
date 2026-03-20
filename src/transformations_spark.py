@@ -8,7 +8,7 @@ log = StructuredLogger("spark_transforms")
 def _top_category(df: DataFrame) -> DataFrame:
     return df.withColumn(
         "top_category", 
-        F.coalesce(F.split(F.col("category_code"), "\.").getItem(0), F.lit("unknown"))
+        F.coalesce(F.split(F.col("category_code"), r"\.").getItem(0), F.lit("unknown"))
     )
 
 
