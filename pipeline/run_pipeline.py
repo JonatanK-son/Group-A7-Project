@@ -160,7 +160,7 @@ def run_analysis_remote():
 
     partial_ddf = ddf_a.map_partitions(_phase1_only, meta=SESSION_META)
     checkpoint_path = RESULTS_DIR / "session_partials.parquet"
-    partial_ddf.to_parquet(str(checkpoint_path), overwrite=True)
+    partial_ddf.to_parquet(str(checkpoint_path), overwrite=True, engine="pyarrow", coerce_timestamps="us", allow_truncated_timestamps=True)
     del ddf_a, partial_ddf
     gc.collect()
 
@@ -180,7 +180,7 @@ def run_analysis_remote():
     if final_path.exists():
         if final_path.is_file(): final_path.unlink()
         else: shutil.rmtree(final_path)
-    sessions_lazy.to_parquet(str(final_path))
+    sessions_lazy.to_parquet(str(final_path), engine="pyarrow", coerce_timestamps="us", allow_truncated_timestamps=True)
     del partial_ddf, sessions_lazy
     gc.collect()
 
@@ -245,7 +245,7 @@ def _run_analysis_local():
     if final_path.exists():
         if final_path.is_file(): final_path.unlink()
         else: shutil.rmtree(final_path)
-    sessions_lazy.to_parquet(str(final_path))
+    sessions_lazy.to_parquet(str(final_path), engine="pyarrow", coerce_timestamps="us", allow_truncated_timestamps=True)
     del partial_ddf, sessions_lazy
 
     ddf_a = dd.read_parquet(str(PARQUET_VALIDATED))
@@ -266,7 +266,7 @@ def _run_analysis_local():
 def main():
     log.info("pipeline_started")
     pipeline_start = time.time()
-    SAMPLE_MODE = False  # Set to True to ingest only 2 CSV partitions for quick dev runs
+    SAMPLE_MODE = True  # Set to True for fast iteration during debugging
 
     # Ensure local output directories exist
     for d in [OUTPUT_DIR, LOGS_DIR, PARQUET_VALIDATED, RESULTS_DIR]:

@@ -33,16 +33,14 @@ def get_spark_session(remote: bool = False) -> SparkSession:
     # Common performance settings
     builder = (
         builder
-        .config("spark.sql.shuffle.partitions", "8")   # Low for this scale
+        .config("spark.sql.shuffle.partitions", "8")
         .config("spark.driver.memory", "1g")
         .config("spark.executor.memory", "1g")
         .config("spark.executor.memoryOverhead", "384")
         .config("spark.executor.instances", "1")
-        .config("spark.sql.parquet.nanosAsLong", "true")
-        .config("spark.sql.parquet.enableVectorizedReader", "true")
-        .config("spark.sql.parquet.datetimeRebaseModeInRead", "LEGACY")
-        .config("spark.sql.parquet.int96RebaseModeInRead", "LEGACY")
-        .config("spark.sql.parquet.mergeSchema", "false")
+        # Standard Parquet timestamp behavior (now that we use microseconds in validation.py)
+        .config("spark.sql.parquet.datetimeRebaseModeInRead", "CORRECTED")
+        .config("spark.sql.parquet.int96RebaseModeInRead", "CORRECTED")
         .config("spark.hadoop.fs.permissions.umask-mode", "000")
         .config("spark.hadoop.mapreduce.fileoutputcommitter.algorithm.version", "2")
     )
@@ -50,7 +48,9 @@ def get_spark_session(remote: bool = False) -> SparkSession:
     if remote:
         # Detect if we are already inside K8s (Cluster/Job mode)
         in_k8s = os.getenv("KUBERNETES_SERVICE_HOST") is not None
-        k8s_master = "k8s://https://kubernetes.default.svc.cluster.local" if in_k8s else "k8s://https://192.168.49.2:8443"
+        # Use the standard Service Shortcut (kubernetes.default.svc) for the master URL
+        # instead of the fully qualified .cluster.local which can be flaky on some setups.
+        k8s_master = "k8s://https://kubernetes.default.svc" if in_k8s else "k8s://https://192.168.49.2:8443"
         log.info("configuring_spark_k8s", master=k8s_master, in_k8s=in_k8s)
         
         builder = (
@@ -92,50 +92,51 @@ def run_analysis_spark(spark: SparkSession, validated_path: str):
     results_spark = RESULTS_DIR.parent / "results_spark"
     results_spark.mkdir(parents=True, exist_ok=True)
     
+    log.info("spark_reading_input", path=validated_path)
     df = spark.read.parquet(validated_path)
     
-    # ── 1. Revenue by Category ────────────────────────────────────────────────
-    # Use a local directory for writing to avoid chmod issues on mounted volumes
-    temp_results = Path("/tmp/results_spark")
-    temp_results.mkdir(parents=True, exist_ok=True)
+    # ── Debugging: verify what Spark sees ─────────────────────────────────────
+    try:
+        row_count = df.count()
+        schema = df.schema.simpleString()
+        log.info("spark_input_verified", rows=row_count, schema=schema)
+        
+        # High-level check for columns
+        cols = df.columns
+        if "event_type" not in cols:
+            log.warning("spark_missing_partition_col", columns=cols)
+            # If partitioning wasn't auto-detected, we might need to cast or re-read
+        
+        if row_count == 0:
+            log.error("spark_input_empty", path=validated_path)
+    except Exception as e:
+        log.error("spark_input_check_failed", error=str(e))
+        raise e
+
+    # ── Analysis Execution ────────────────────────────────────────────────────
+    # Write directly to the shared mount so executors and driver see the same files.
+    # We use a subfolder in the results directory.
     
     log.info("spark_revenue_by_category")
     revenue = compute_revenue_by_category(df)
-    revenue.write.parquet(str(temp_results / "revenue_by_category.parquet"), mode="overwrite")
+    revenue.write.parquet(str(results_spark / "revenue_by_category.parquet"), mode="overwrite")
     
     log.info("spark_conversion_funnel")
     funnel = compute_conversion_funnel(df)
-    funnel.write.parquet(str(temp_results / "conversion_funnel.parquet"), mode="overwrite")
+    funnel.write.parquet(str(results_spark / "conversion_funnel.parquet"), mode="overwrite")
     
     log.info("spark_hourly_activity")
     hourly = compute_hourly_activity(df)
-    hourly.write.parquet(str(temp_results / "hourly_activity.parquet"), mode="overwrite")
+    hourly.write.parquet(str(results_spark / "hourly_activity.parquet"), mode="overwrite")
     
     log.info("spark_session_stats")
     sessions = compute_session_stats(df)
-    sessions.write.parquet(str(temp_results / "session_stats.parquet"), mode="overwrite")
+    sessions.write.parquet(str(results_spark / "session_stats.parquet"), mode="overwrite")
     
     log.info("spark_top_brands")
     brands = compute_top_brands(df)
-    brands.write.parquet(str(temp_results / "top_brands.parquet"), mode="overwrite")
+    brands.write.parquet(str(results_spark / "top_brands.parquet"), mode="overwrite")
 
-    # Final move to the actual output directory
-    import shutil
-    log.info("spark_persisting_results", src=str(temp_results), dst=str(results_spark))
-    
-    # On some filesystems (like Minikube host mounts), rmtree fails with locks.
-    # We use dirs_exist_ok=True (Python 3.8+) to copy over existing files.
-    try:
-        shutil.copytree(temp_results, results_spark, dirs_exist_ok=True)
-        log.info("spark_results_persisted", path=str(results_spark))
-    except Exception as e:
-        log.warning("spark_copy_partial_fail", error=str(e))
-        # Often occurs on Windows mounts even if files were copied
-        if (results_spark / "session_stats.parquet").exists():
-            log.info("spark_results_verified_at_destination")
-        else:
-            raise e
-    
     log.info("spark_analysis_complete")
 
 
@@ -156,19 +157,42 @@ def main():
         
         run_analysis_spark(spark, validated_path)
         
-        # Display sample for verification
+        # ── Display results summary (mirroring Dask) ──────────────────────────
         results_spark = RESULTS_DIR.parent / "results_spark"
         print("\n" + "=" * 80)
         print(" SPARK PIPELINE RESULTS SUMMARY ".center(80, "="))
         print("=" * 80)
-        
-        sessions_sample = pd.read_parquet(results_spark / "session_stats.parquet").head(10)
-        print("\n[ Session Statistics (Sample) ]")
-        print(sessions_sample.to_string(index=False))
-        
+
+        # Analysis names and matching titles from the Dask pipeline
+        summaries = [
+            ("revenue_by_category", "Analysis 1: Revenue by Category (Top 10)"),
+            ("top_brands",          "Analysis 2: Top Brands by Revenue (Top 10)"),
+            ("conversion_funnel",   "Analysis 3: Conversion Funnel (Top 10 Categories)"),
+            ("session_stats",       "Analysis 4: Session Statistics (Sample)")
+        ]
+
+        for parquet_name, title in summaries:
+            path = results_spark / f"{parquet_name}.parquet"
+            try:
+                # Load back with Spark and sample to Pandas for pretty display
+                # This is much more robust than pd.read_parquet on Spark-managed directories
+                res_df = spark.read.parquet(str(path))
+                pdf = res_df.limit(10).toPandas()
+                
+                print(f"\n[ {title} ]")
+                if not pdf.empty:
+                    print(pdf.to_string(index=False))
+                else:
+                    print("Empty DataFrame. Verify that upstream data and transformations are working.")
+                sys.stdout.flush()
+            except Exception as e:
+                log.warning("summary_load_failed", analysis=parquet_name, error=str(e), path=str(path))
+
         total = round(time.time() - pipeline_start, 1)
         log.info("spark_pipeline_completed", total_s=total)
         print(f"\nSpark Pipeline completed in {total}s")
+        print("Spark run completed.")
+        sys.stdout.flush()
         
     finally:
         spark.stop()

@@ -11,6 +11,6 @@ kubectl rollout status deployment dask-worker
 
 # 3. Running the pipeline
 Write-Host "Starting Dask pipeline..." -ForegroundColor Green
-& C:/Users/kontr/AppData/Local/Programs/Python/Python310/python.exe ./pipeline/run_pipeline.py
+uv run python ./pipeline/run_pipeline.py
 
 Write-Host "`nDask run completed." -ForegroundColor Cyan

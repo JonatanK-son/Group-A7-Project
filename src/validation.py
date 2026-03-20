@@ -55,7 +55,9 @@ def clean_data(ddf: dd.DataFrame) -> dd.DataFrame:
     ddf = ddf[ddf["event_type"].isin(VALID_EVENT_TYPES)]
     ddf = ddf[ddf["price"] >= 0]
     ddf = ddf[ddf["user_session"].str.strip() != ""]
-    # Truncate event_time to microsecond precision for Spark compatibility
-    ddf["event_time"] = ddf["event_time"].dt.floor("us")
+    # Force microsecond precision for Spark compatibility.
+    # The CSV parser reads it as timezone-aware (UTC), so we must strip the zone
+    # (localize to None) before casting to a naive datetime64[us].
+    ddf["event_time"] = ddf["event_time"].dt.tz_localize(None).astype("datetime64[us]")
     log.info("cleaning_rules_applied")
     return ddf

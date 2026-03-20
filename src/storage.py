@@ -31,8 +31,8 @@ def save_parquet_dask(
         write_index=False, 
         engine="pyarrow", 
         schema="infer", 
-        coerce_timestamps="us",
-        allow_truncated_timestamps=True,
+        # Use INT96 timestamps for maximum Spark compatibility (avoids NANOS error)
+        use_deprecated_int96_timestamps=True,
         **kwargs
     )
     log.info("saved_parquet_dask", path=str(path))
