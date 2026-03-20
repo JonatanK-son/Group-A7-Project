@@ -1,4 +1,6 @@
+from __future__ import annotations
 """All Dask-based transformations: 5 distinct operations."""
+
 import dask.dataframe as dd
 import pandas as pd
 

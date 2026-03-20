@@ -1,0 +1,31 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: spark-pipeline-job
+spec:
+  template:
+    metadata:
+      name: spark-pipeline-job
+    spec:
+      serviceAccountName: spark
+      containers:
+        - name: spark-driver
+          image: ecom-pipeline:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python3", "pipeline/run_spark_pipeline.py"]
+          env:
+            - name: HADOOP_USER_NAME
+              value: "root"
+            - name: SPARK_DRIVER_BIND_ADDRESS
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          volumeMounts:
+            - name: output
+              mountPath: /app/output
+      volumes:
+        - name: output
+          hostPath:
+            path: /output
+      restartPolicy: Never
+  backoffLimit: 0

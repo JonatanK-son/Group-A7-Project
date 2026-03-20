@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import socket
+import dask
 import dask.dataframe as dd
 from dask.distributed import Client
 import pandas as pd
@@ -163,11 +164,13 @@ def run_analysis_remote():
     del ddf_a, partial_ddf
     gc.collect()
 
+    dask.config.set({"dataframe.query-planning": False})  # Fallback to legacy engine for better memory stability on small clusters
+    
     # Step 4b: Read back and finalize global reduction
     partial_ddf = dd.read_parquet(str(checkpoint_path))
     sessions_lazy = (
         partial_ddf.groupby("user_session")
-        .agg({"session_start":"min", "session_end":"max", "num_events":"sum", "total_spend":"sum"}, split_out=16)
+        .agg({"session_start":"min", "session_end":"max", "num_events":"sum", "total_spend":"sum"}, split_out=32)
         .reset_index()
     )
     sessions_lazy["session_duration_min"] = (sessions_lazy["session_end"] - sessions_lazy["session_start"]).dt.total_seconds() / 60

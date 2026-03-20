@@ -71,6 +71,7 @@ if (-not $MountReady) {
 Write-Host "`n[5/6] Deploying Dask scheduler and workers..." -ForegroundColor Green
 kubectl apply -f k8s/dask-scheduler.yaml
 kubectl apply -f k8s/dask-worker.yaml
+kubectl apply -f k8s/spark-role.yaml
 
 # Force pods to restart so they re-bind the hostPath volume from scratch.
 # This is a no-op for brand-new deployments and fixes the race for re-runs.
