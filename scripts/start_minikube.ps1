@@ -28,7 +28,7 @@ if (!(Test-Path "./data") -or !(Get-ChildItem "./data/*.csv" -ErrorAction Silent
 
 # 1. Start Minikube
 Write-Host "`n[1/6] Starting Minikube..." -ForegroundColor Green
-minikube start --memory=6144 --cpus=4
+minikube start --memory=8192 --cpus=4
 
 # 2. Point Docker at Minikube's daemon
 Write-Host "`n[2/6] Pointing Docker to Minikube..." -ForegroundColor Green
@@ -103,7 +103,8 @@ Start-Process kubectl -WindowStyle Hidden -ArgumentList "port-forward svc/dask-s
 Start-Sleep -Seconds 3
 if (Test-NetConnection -ComputerName 127.0.0.1 -Port 8787 -InformationLevel Quiet) {
     Write-Host "Dask Dashboard: http://localhost:8787 (Port-forwarding active)" -ForegroundColor Green
-} else {
+}
+else {
     Write-Warning "Dask Dashboard might not be ready yet. Check http://localhost:8787 in a moment."
 }
 
