@@ -1,8 +1,12 @@
 from __future__ import annotations
 """All Dask-based transformations: 5 distinct operations."""
 
+import dask
 import dask.dataframe as dd
 import pandas as pd
+import gc
+import shutil
+from pathlib import Path
 
 from src.logger import StructuredLogger
 
@@ -114,54 +118,69 @@ SESSION_META = pd.DataFrame({
     "total_spend":   pd.Series(dtype="float64"),
 })
 
-def compute_session_stats(ddf: dd.DataFrame) -> dd.DataFrame:
+def compute_session_stats(ddf: dd.DataFrame, checkpoint_path: str, final_path: str) -> None:
     """
-    Per-session aggregation using a two-phase map-reduce pattern.
+    Per-session aggregation using a two-phase map-reduce pattern with disk checkpointing.
     
-    Returns a LAZY Dask DataFrame. The caller should .compute() it.
+    This implementation saves partial results to disk halfway through the shuffle
+    to bound peak memory usage, which is critical for stability on small clusters.
     
-    Derived columns:
-      session_start / session_end    min/max event_time
-      num_events                     total event count
-      total_spend                    sum of all prices in the session
+    Args:
+        ddf: Input validated Dask DataFrame.
+        checkpoint_path: Path where intermediate partition-level aggregates are saved.
+        final_path: Final destination for the session statistics Parquet file.
     """
-    def _per_partition(df: pd.DataFrame) -> pd.DataFrame:
-        if df.empty:
-            return SESSION_META
-        return (
-            df.groupby("user_session", sort=False)
-            .agg(
-                session_start=("event_time", "min"),
-                session_end=("event_time", "max"),
-                num_events=("product_id", "count"),
-                total_spend=("price", "sum"),
-            )
-            .reset_index()
-        )
+    # Step 4a: Phase 1 partial reduction saved to disk to clear memory
+    def _phase1_only(df):
+        if df.empty: return SESSION_META
+        return df.groupby("user_session", sort=False).agg(
+            session_start=("event_time", "min"), session_end=("event_time", "max"),
+            num_events=("product_id", "count"), total_spend=("price", "sum")
+        ).reset_index()
 
-    # Phase 1: Partial aggregates per partition
-    partial_ddf = ddf.map_partitions(_per_partition, meta=SESSION_META)
+    partial_ddf = ddf.map_partitions(_phase1_only, meta=SESSION_META)
+    
+    log.info("session_stats_phase1_started", path=str(checkpoint_path))
+    partial_ddf.to_parquet(
+        str(checkpoint_path), 
+        overwrite=True, 
+        engine="pyarrow", 
+        coerce_timestamps="us", 
+        allow_truncated_timestamps=True
+    )
+    
+    del partial_ddf
+    gc.collect()
 
-    # Phase 2: Global reduction
-    # We use a native Dask groupby.agg which handles the shuffle efficiently.
-    # split_out=8 helps distribute the shuffle pressure.
-    agg = (
-        partial_ddf
-        .groupby("user_session")
-        .agg({
-            "session_start": "min",
-            "session_end":   "max",
-            "num_events":    "sum",
-            "total_spend":   "sum",
-        }, split_out=8)
+    # Disable query planning for better memory stability during the global reduction phase
+    dask.config.set({"dataframe.query-planning": False})
+    
+    # Step 4b: Read back and finalize global reduction
+    log.info("session_stats_phase2_started", path=str(final_path))
+    partial_ddf = dd.read_parquet(str(checkpoint_path))
+    sessions_lazy = (
+        partial_ddf.groupby("user_session")
+        .agg({"session_start":"min", "session_end":"max", "num_events":"sum", "total_spend":"sum"}, split_out=32)
         .reset_index()
     )
+    sessions_lazy["session_duration_min"] = (sessions_lazy["session_end"] - sessions_lazy["session_start"]).dt.total_seconds() / 60
     
-    # Calculate duration
-    agg["session_duration_min"] = (
-        (agg["session_end"] - agg["session_start"]).dt.total_seconds() / 60
+    # Clean up target directory if it exists as a folder or file
+    p = Path(final_path)
+    if p.exists():
+        if p.is_file(): p.unlink()
+        else: shutil.rmtree(p)
+        
+    sessions_lazy.to_parquet(
+        str(final_path), 
+        engine="pyarrow", 
+        coerce_timestamps="us", 
+        allow_truncated_timestamps=True
     )
-    return agg
+    
+    del partial_ddf, sessions_lazy
+    gc.collect()
+    log.info("session_stats_done", final_path=str(final_path))
 
 
 # ── Analysis 5: Top brands by purchase revenue (filter + aggregate) ───────────

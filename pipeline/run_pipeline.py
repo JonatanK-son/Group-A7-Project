@@ -14,6 +14,7 @@ import os
 import sys
 import time
 import shutil
+import gc
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -147,41 +148,14 @@ def run_analysis_remote():
     del ddf_a, hourly
     gc.collect()
 
-    # ── 4. Session statistics (Checkpoint Pattern) ────────────────────────────
-    # Step 4a: Phase 1 partial reduction saved to disk to clear memory
+    # ── 4. Session statistics ─────────────────────────────────────────────────
     ddf_a = dd.read_parquet(str(PARQUET_VALIDATED))
-    # We only use the Phase 1 part of the lazy graph
-    def _phase1_only(df):
-        if df.empty: return SESSION_META
-        return df.groupby("user_session", sort=False).agg(
-            session_start=("event_time", "min"), session_end=("event_time", "max"),
-            num_events=("product_id", "count"), total_spend=("price", "sum")
-        ).reset_index()
-
-    partial_ddf = ddf_a.map_partitions(_phase1_only, meta=SESSION_META)
-    checkpoint_path = RESULTS_DIR / "session_partials.parquet"
-    partial_ddf.to_parquet(str(checkpoint_path), overwrite=True, engine="pyarrow", coerce_timestamps="us", allow_truncated_timestamps=True)
-    del ddf_a, partial_ddf
-    gc.collect()
-
-    dask.config.set({"dataframe.query-planning": False})  # Fallback to legacy engine for better memory stability on small clusters
-    
-    # Step 4b: Read back and finalize global reduction
-    partial_ddf = dd.read_parquet(str(checkpoint_path))
-    sessions_lazy = (
-        partial_ddf.groupby("user_session")
-        .agg({"session_start":"min", "session_end":"max", "num_events":"sum", "total_spend":"sum"}, split_out=32)
-        .reset_index()
+    compute_session_stats(
+        ddf_a, 
+        checkpoint_path=RESULTS_DIR / "session_partials.parquet",
+        final_path=RESULTS_DIR / "session_stats.parquet"
     )
-    sessions_lazy["session_duration_min"] = (sessions_lazy["session_end"] - sessions_lazy["session_start"]).dt.total_seconds() / 60
-    
-    # Save directly to disk from workers; NEVER .compute() back to a single worker's memory
-    final_path = RESULTS_DIR / "session_stats.parquet"
-    if final_path.exists():
-        if final_path.is_file(): final_path.unlink()
-        else: shutil.rmtree(final_path)
-    sessions_lazy.to_parquet(str(final_path), engine="pyarrow", coerce_timestamps="us", allow_truncated_timestamps=True)
-    del partial_ddf, sessions_lazy
+    del ddf_a
     gc.collect()
 
     # ── 5. Top brands ─────────────────────────────────────────────────────────
@@ -220,33 +194,13 @@ def _run_analysis_local():
 
     # ── 4. Session statistics ─────────────────────────────────────────────────
     ddf_a = dd.read_parquet(str(PARQUET_VALIDATED))
-    # Local fallback also uses checkpointing for consistency and memory safety
-    def _phase1_only(df):
-        if df.empty: return SESSION_META
-        return df.groupby("user_session", sort=False).agg(
-            session_start=("event_time", "min"), session_end=("event_time", "max"),
-            num_events=("product_id", "count"), total_spend=("price", "sum")
-        ).reset_index()
-
-    partial_ddf = ddf_a.map_partitions(_phase1_only, meta=SESSION_META)
-    checkpoint_path = RESULTS_DIR / "session_partials.parquet"
-    partial_ddf.to_parquet(str(checkpoint_path), overwrite=True)
-    del ddf_a, partial_ddf
-
-    partial_ddf = dd.read_parquet(str(checkpoint_path))
-    sessions_lazy = (
-        partial_ddf.groupby("user_session")
-        .agg({"session_start":"min", "session_end":"max", "num_events":"sum", "total_spend":"sum"})
-        .reset_index()
+    compute_session_stats(
+        ddf_a, 
+        checkpoint_path=RESULTS_DIR / "session_partials.parquet",
+        final_path=RESULTS_DIR / "session_stats.parquet"
     )
-    sessions_lazy["session_duration_min"] = (sessions_lazy["session_end"] - sessions_lazy["session_start"]).dt.total_seconds() / 60
-    
-    final_path = RESULTS_DIR / "session_stats.parquet"
-    if final_path.exists():
-        if final_path.is_file(): final_path.unlink()
-        else: shutil.rmtree(final_path)
-    sessions_lazy.to_parquet(str(final_path), engine="pyarrow", coerce_timestamps="us", allow_truncated_timestamps=True)
-    del partial_ddf, sessions_lazy
+    del ddf_a
+    gc.collect()
 
     ddf_a = dd.read_parquet(str(PARQUET_VALIDATED))
     brands = compute_top_brands(ddf_a)
