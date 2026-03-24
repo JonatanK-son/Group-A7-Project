@@ -157,10 +157,11 @@ def compute_session_stats(ddf: dd.DataFrame, checkpoint_path: str, final_path: s
     
     # Step 4b: Read back and finalize global reduction
     log.info("session_stats_phase2_started", path=str(final_path))
+    gc.collect()  # Flush any remaining memory from Phase 1
     partial_ddf = dd.read_parquet(str(checkpoint_path))
     sessions_lazy = (
         partial_ddf.groupby("user_session")
-        .agg({"session_start":"min", "session_end":"max", "num_events":"sum", "total_spend":"sum"}, split_out=32)
+        .agg({"session_start":"min", "session_end":"max", "num_events":"sum", "total_spend":"sum"}, split_out=128)
         .reset_index()
     )
     sessions_lazy["session_duration_min"] = (sessions_lazy["session_end"] - sessions_lazy["session_start"]).dt.total_seconds() / 60
