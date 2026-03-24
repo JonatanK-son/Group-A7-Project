@@ -1,0 +1,92 @@
+﻿apiVersion: batch/v1
+kind: Job
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"batch/v1","kind":"Job","metadata":{"annotations":{},"name":"spark-pipeline-job","namespace":"default"},"spec":{"backoffLimit":0,"template":{"metadata":{"name":"spark-pipeline-job"},"spec":{"containers":[{"command":["python3","pipeline/run_spark_pipeline.py"],"env":[{"name":"HADOOP_USER_NAME","value":"root"},{"name":"SPARK_DRIVER_BIND_ADDRESS","valueFrom":{"fieldRef":{"fieldPath":"status.podIP"}}},{"name":"PYTHONUNBUFFERED","value":"1"}],"image":"ecom-pipeline:latest","imagePullPolicy":"IfNotPresent","name":"spark-driver","volumeMounts":[{"mountPath":"/app/output","name":"output"}]}],"restartPolicy":"Never","serviceAccountName":"spark","volumes":[{"hostPath":{"path":"/output"},"name":"output"}]}}}}
+  creationTimestamp: "2026-03-20T13:05:16Z"
+  generation: 1
+  labels:
+    batch.kubernetes.io/controller-uid: 3f6df215-e8ca-437a-8a36-64d67d51c228
+    batch.kubernetes.io/job-name: spark-pipeline-job
+    controller-uid: 3f6df215-e8ca-437a-8a36-64d67d51c228
+    job-name: spark-pipeline-job
+  name: spark-pipeline-job
+  namespace: default
+  resourceVersion: "73131"
+  uid: 3f6df215-e8ca-437a-8a36-64d67d51c228
+spec:
+  backoffLimit: 0
+  completionMode: NonIndexed
+  completions: 1
+  manualSelector: false
+  parallelism: 1
+  podReplacementPolicy: TerminatingOrFailed
+  selector:
+    matchLabels:
+      batch.kubernetes.io/controller-uid: 3f6df215-e8ca-437a-8a36-64d67d51c228
+  suspend: false
+  template:
+    metadata:
+      labels:
+        batch.kubernetes.io/controller-uid: 3f6df215-e8ca-437a-8a36-64d67d51c228
+        batch.kubernetes.io/job-name: spark-pipeline-job
+        controller-uid: 3f6df215-e8ca-437a-8a36-64d67d51c228
+        job-name: spark-pipeline-job
+      name: spark-pipeline-job
+    spec:
+      containers:
+      - command:
+        - python3
+        - pipeline/run_spark_pipeline.py
+        env:
+        - name: HADOOP_USER_NAME
+          value: root
+        - name: SPARK_DRIVER_BIND_ADDRESS
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: status.podIP
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        image: ecom-pipeline:latest
+        imagePullPolicy: IfNotPresent
+        name: spark-driver
+        resources: {}
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /app/output
+          name: output
+      dnsPolicy: ClusterFirst
+      restartPolicy: Never
+      schedulerName: default-scheduler
+      securityContext: {}
+      serviceAccount: spark
+      serviceAccountName: spark
+      terminationGracePeriodSeconds: 30
+      volumes:
+      - hostPath:
+          path: /output
+          type: ""
+        name: output
+status:
+  completionTime: "2026-03-20T13:05:50Z"
+  conditions:
+  - lastProbeTime: "2026-03-20T13:05:50Z"
+    lastTransitionTime: "2026-03-20T13:05:50Z"
+    message: Reached expected number of succeeded pods
+    reason: CompletionsReached
+    status: "True"
+    type: SuccessCriteriaMet
+  - lastProbeTime: "2026-03-20T13:05:50Z"
+    lastTransitionTime: "2026-03-20T13:05:50Z"
+    message: Reached expected number of succeeded pods
+    reason: CompletionsReached
+    status: "True"
+    type: Complete
+  ready: 0
+  startTime: "2026-03-20T13:05:16Z"
+  succeeded: 1
+  terminating: 0
+  uncountedTerminatedPods: {}

@@ -15,22 +15,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tini \
     curl \
     gosu \
+    && groupadd -r spark --gid=185 \
+    && useradd -r -g spark --uid=185 spark \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Official Apache Spark 3.5.0
-ENV SPARK_VERSION=3.5.0
-ENV HADOOP_VERSION=3
+# Install Official Apache Spark 3.5.0 from the spark-dist stage
 ENV SPARK_HOME=/opt/spark
 ENV PATH=$PATH:$SPARK_HOME/bin:$SPARK_HOME/sbin
 
-RUN curl -sL "https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/spark-${SPARK_VERSION}-bin-hadoop${HADOOP_VERSION}.tgz" \
-    | tar -xz -C /opt && \
-    mv /opt/spark-${SPARK_VERSION}-bin-hadoop${HADOOP_VERSION} ${SPARK_HOME}
-
-# Use the official entrypoint script included in the Spark distribution itself
-# This ensures perfect compatibility and avoids Windows/Linux line ending issues.
-RUN cp ${SPARK_HOME}/kubernetes/dockerfiles/spark/entrypoint.sh /opt/entrypoint.sh && \
-    chmod +x /opt/entrypoint.sh
+COPY --from=spark-dist /opt/spark /opt/spark
+COPY --from=spark-dist /opt/entrypoint.sh /opt/entrypoint.sh
+RUN chmod +x /opt/entrypoint.sh
 
 # Add python -> python3 symlink
 RUN ln -sf /usr/bin/python3 /usr/bin/python
