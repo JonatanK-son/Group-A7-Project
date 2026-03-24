@@ -55,87 +55,115 @@ For more details, see [docs/data.md](docs/data.md).
 │   └── pipeline-job.yaml        # Kubernetes Job
 ├── Dockerfile
 ├── pyproject.toml               # project metadata and dependencies
-└── uv.lock                      # lockfile for reproducible environments
+├── uv.lock                      # lockfile for reproducible environments
 ```
 
 ---
 
-### Using just (recommended)
- 
-If you have [just](https://github.com/casey/just) installed:
- 
-```bash
-just sync
-just data-sample
-just pipeline
-```
- 
-### Using uv directly
- 
-```bash
-# 1. Install uv (if not already installed)
-# powershell: iwr https://astral.sh/uv/install.ps1 | iex
+### Quick Start (Local)
 
-# 2. Setup project and download sample data
+If you have [just](https://github.com/casey/just) installed:
+
+```bash
+just sync           # Install dependencies
+just data-sample    # Download ~100MB sample
+just pipeline       # Run Dask pipeline locally
+just save-figures   # Generate charts from results
+```
+
+Without `just`:
+
+```bash
 uv sync
 uv run python scripts/download_data.py --sample
-
-# 3. Run the pipeline
-uv run pipeline/run_pipeline.py
+uv run python pipeline/run_pipeline.py
+uv run python scripts/save_figures.py
 ```
 
 ---
 
-## Storage Strategy
+## Distributed Execution (Minikube)
 
-| Layer | Format | Location | Rationale |
-|---|---|---|---|
-| Raw input | CSV | `data/` | Unchanged source of truth |
-| Validated intermediate | **Parquet** partitioned by `event_type` | `output/parquet/validated/` | Predicate pushdown filters whole partitions at read time |
-| Analysis results | **Parquet** (single file each) | `output/results/` | Compact, typed, BI-tool ready |
+The pipeline is fully containerized and can be deployed to a local Minikube cluster using either **Dask** or **Apache Spark** as the engine.
+
+### 1. Cluster Setup (All Platforms)
+
+The project includes an automated setup script that handles:
+- Starting **Minikube** with optimized resources.
+- Pointing your **Docker** daemon to the cluster.
+- **Building** the pipeline image directly into the cluster.
+- **Mounting** your local data folders.
+- **Deploying** the Dask scheduler, workers, and Spark RBAC.
+- Establishing **Port-Forwards** for the dashboards.
+
+#### **Run the setup script for your platform:**
+
+*   **Linux (Bash)**:
+    ```bash
+    bash scripts/start_minikube.sh
+    ```
+*   **Windows (PowerShell)**:
+    ```powershell
+    .\scripts\start_minikube.ps1
+    ```
 
 ---
 
-## Kubernetes Deployment (Minikube)
+### 2. Running on Linux (Bash)
 
-### Prerequisites
-- [Minikube](https://minikube.sigs.k8s.io/) installed and running
-- [kubectl](https://kubernetes.io/docs/tasks/tools/) configured
+The project includes shell scripts in the `scripts/` directory for automated deployment.
 
-### Steps
+*   **Start Dask**:
+    ```bash
+    bash scripts/run_dask.sh        # Scales Dask and runs the job
+    ```
+*   **Start Spark**:
+    ```bash
+    bash scripts/run_spark.sh       # Scales down Dask and runs Spark Job
+    ```
+
+### 3. Running on Windows (PowerShell)
+
+Use the curated `.ps1` scripts for a seamless Windows experience.
+
+*   **Start Dask**:
+    ```powershell
+    .\scripts\run_dask.ps1          # Scales Dask and runs the job
+    ```
+*   **Start Spark**:
+    ```powershell
+    .\scripts\run_spark.ps1         # Scales down Dask and runs Spark Job
+    ```
+
+---
+
+## Monitoring & Dashboards
+
+Both frameworks provide real-time dashboards for monitoring task execution and memory usage.
+
+*   **Dask Dashboard**:
+    Once the scheduler pod is running, access it at:
+    `minikube service dask-dashboard` (typically `http://localhost:8787`)
+*   **Spark UI**:
+    The `run_spark` scripts automatically establish a port-forward to:
+    `http://localhost:4040` (while the job is active)
+
+---
+
+## Results & Visualizations
+
+After the pipeline completes, results are stored in `output/results/` (Dask) or `output/results_spark/` (Spark). To generate visual charts:
 
 ```bash
-# 1. Start Minikube
-minikube start --memory=8192 --cpus=4
-
-# 2. Point Docker at Minikube's daemon (builds image directly into cluster)
-eval $(minikube docker-env)          # Linux/macOS
-# minikube docker-env | Invoke-Expression   # PowerShell
-
-# 3. Build the pipeline image
-docker build -t ecom-pipeline:latest .
-
-# 4. Mount data folder into Minikube (keep this terminal open)
-minikube mount ./data:/data
-
-# 5. Deploy Dask scheduler + workers
-kubectl apply -f k8s/dask-scheduler.yaml
-kubectl apply -f k8s/dask-worker.yaml
-
-# 6. Wait for pods to be Ready
-kubectl get pods -w
-
-# 7. Run the pipeline Job
-kubectl apply -f k8s/pipeline-job.yaml
-
-# 8. Stream logs
-kubectl logs -f job/ecom-pipeline-job
-
-# 9. Access Dask dashboard (opens browser)
-minikube service dask-dashboard
+uv run python scripts/save_figures.py
 ```
+Outputs are saved in `output/figures/` as high-resolution PNGs.
 
-### Scale workers
+---
+
+## Infrastructure Scaling (Dask)
+
+You can dynamically adjust the number of Dask workers to match your cluster resources:
 
 ```bash
 kubectl scale deployment dask-worker --replicas=5
@@ -156,6 +184,30 @@ kubectl scale deployment dask-worker --replicas=5
 | Top brands | Dask | **filter** + **nlargest** |
 | Product window rank | Spark | **RANK() OVER PARTITION BY** (window function) |
 | Storage | — | write/read **Parquet** |
+
+---
+
+## Scaling to the Cloud
+
+For production workloads exceeding the capacity of a local Minikube cluster, the pipeline can be transitioned to cloud-native Kubernetes (GKE, EKS, or AKS) following these steps:
+
+### 1. Cloud Storage Migration
+The current `hostPath` mounts in `k8s/*.yaml` should be replaced with cloud-native object storage:
+*   **Infrastructure**: Upload raw CSVs to **GCS** (Google Cloud Storage) or **Amazon S3**.
+*   **Code Update**: Update `src/config.py` to use `s3://` or `gs://` prefixes. Dask and Spark use `fsspec` and `hadoop-aws`/`gcsfs` to read these natively.
+*   **Performance**: Cloud storage provides high-throughput concurrent reads, allowing the cluster to scale to hundreds of workers without I/O bottlenecks.
+
+### 2. Deployment to Managed Kubernetes
+*   **Build & Push**: Build the Docker image and push it to a private container registry (GCR, ECR).
+*   **Volume Configuration**: Replace `hostPath` volumes in `dask-worker.yaml` and `spark-job.yaml` with **Persistent Volume Claims (PVCs)** or direct cloud storage connectors.
+*   **Resource Allocation**: Adjust `resources` requests and limits in the YAML manifests to utilize high-memory machine types (e.g., `n2-highmem-8`).
+
+### 3. Auto-scaling & Spot Instances
+*   **Vertical Scaling**: Use larger `split_out` values in Dask to handle multi-terabyte datasets.
+*   **Cost Optimization**: Deploy Dask workers on **Spot/Preemptible instances**. Dask's resilience handles worker terminations gracefully by re-computing lost partitions.
+*   **Cluster Auto-scaler**: Enable Kubernetes auto-scaling to dynamically provision nodes based on the Dask task queue length.
+
+---
 
 ---
 
