@@ -194,8 +194,15 @@ def main():
         total = round(time.time() - pipeline_start, 1)
         log.info("spark_pipeline_completed", total_s=total)
         print(f"\nSpark Pipeline completed in {total}s")
-        print("Spark run completed.")
+        print("-" * 40)
+        print("KEEPING SPARK UI ALIVE FOR 3 MINUTES...")
+        print("You can view the dashboard at http://localhost:4040")
+        print("The script will automatically exit and stop the session in 180 seconds.")
+        print("-" * 40)
         sys.stdout.flush()
+        
+        # Keep alive for the user to see the dashboard
+        time.sleep(180)
         
     finally:
         spark.stop()

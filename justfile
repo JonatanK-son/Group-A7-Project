@@ -24,6 +24,26 @@ pipeline:
 notebook:
     uv run jupyter notebook notebooks/pipeline.ipynb
 
+# Save output figures to the /output/figures directory
+save-figures:
+    uv run python scripts/save_figures.py
+
+# Start Minikube execution
+start-minikube:
+    pwsh -File scripts/start_minikube.ps1
+
+# Run Dask Pipeline
+run-dask:
+    pwsh -File scripts/run_dask.ps1
+
+# Run Spark Pipeline
+run-spark:
+    pwsh -File scripts/run_spark.ps1
+
+# Check the generated schema for valid parquet files
+check-schema:
+    uv run python scripts/check_schema.py
+
 # Clean temporary output and data files
 clean:
     rm -rf output/parquet/*

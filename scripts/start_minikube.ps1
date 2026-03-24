@@ -28,7 +28,7 @@ if (!(Test-Path "./data") -or !(Get-ChildItem "./data/*.csv" -ErrorAction Silent
 
 # 1. Start Minikube
 Write-Host "`n[1/6] Starting Minikube..." -ForegroundColor Green
-minikube start --memory=7866 --cpus=4
+minikube start --memory=6144 --cpus=4
 
 # 2. Point Docker at Minikube's daemon
 Write-Host "`n[2/6] Pointing Docker to Minikube..." -ForegroundColor Green
@@ -88,12 +88,28 @@ kubectl rollout status deployment/dask-worker --timeout=120s
 
 # 6. Port forward the dashboard and scheduler
 Write-Host "`n[6/6] Port-forwarding Dask dashboard (8787) and scheduler (8786) (Opening in new windows)..." -ForegroundColor Green
+
+# Kill any existing kubectl port-forward processes first
+Get-Process kubectl -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*port-forward*8787:8787*" -or $_.CommandLine -like "*port-forward*8786:8786*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+
+# Verify 8787/8786 aren't held by non-kubectl processes
+$occ8787 = Get-NetTCPConnection -LocalPort 8787 -ErrorAction SilentlyContinue
+if ($occ8787) { Write-Warning "Port 8787 is occupied (PID: $($occ8787.OwningProcess))" }
+
 Start-Process kubectl -WindowStyle Hidden -ArgumentList "port-forward svc/dask-scheduler 8787:8787"
 Start-Process kubectl -WindowStyle Hidden -ArgumentList "port-forward svc/dask-scheduler 8786:8786"
+
+# Brief wait to verify Dask dashboard
+Start-Sleep -Seconds 3
+if (Test-NetConnection -ComputerName 127.0.0.1 -Port 8787 -InformationLevel Quiet) {
+    Write-Host "Dask Dashboard: http://localhost:8787 (Port-forwarding active)" -ForegroundColor Green
+} else {
+    Write-Warning "Dask Dashboard might not be ready yet. Check http://localhost:8787 in a moment."
+}
 
 Write-Host "`n=== Setup Complete ===" -ForegroundColor Cyan
 Write-Host "Useful commands:"
 Write-Host "  Watch pods:      kubectl get pods -w"
-Write-Host "  Stream logs:     kubectl logs -f job/ecom-pipeline-job"
+Write-Host "  Stream logs:     kubectl logs -f deployment/dask-worker"
 Write-Host "  Dashboard URL:   http://localhost:8787"
 Write-Host "  Scheduler URL:   tcp://localhost:8786"

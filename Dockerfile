@@ -17,27 +17,35 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gosu \
     && rm -rf /var/lib/apt/lists/*
 
+# Create spark user/group that the official entrypoint expects
+RUN groupadd -g 1000 spark && \
+    useradd -u 1000 -g spark -d /app -s /bin/bash spark && \
+    chown -R spark:spark /app
+
 # Install Official Apache Spark 3.5.0
 ENV SPARK_VERSION=3.5.0
 ENV HADOOP_VERSION=3
 ENV SPARK_HOME=/opt/spark
 ENV PATH=$PATH:$SPARK_HOME/bin:$SPARK_HOME/sbin
 
-RUN curl -sL "https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/spark-${SPARK_VERSION}-bin-hadoop${HADOOP_VERSION}.tgz" \
-    | tar -xz -C /opt && \
-    mv /opt/spark-${SPARK_VERSION}-bin-hadoop${HADOOP_VERSION} ${SPARK_HOME}
+# Copy Spark from the official image instead of downloading it slowly
+COPY --from=spark-dist /opt/spark /opt/spark
 
 # Use the official entrypoint script included in the Spark distribution itself
 # This ensures perfect compatibility and avoids Windows/Linux line ending issues.
-RUN cp ${SPARK_HOME}/kubernetes/dockerfiles/spark/entrypoint.sh /opt/entrypoint.sh && \
-    chmod +x /opt/entrypoint.sh
+COPY --from=spark-dist /opt/entrypoint.sh /opt/entrypoint.sh
+RUN chmod +x /opt/entrypoint.sh
 
 # Add python -> python3 symlink
 RUN ln -sf /usr/bin/python3 /usr/bin/python
 
-# Install requirements (pyspark 3.5.0 and dask 2026.x)
-COPY requirements.txt .
-RUN pip3 install --no-cache-dir -r requirements.txt
+# Install python dependencies via uv
+COPY pyproject.toml uv.lock ./
+RUN pip3 install uv && \
+    uv sync --frozen --no-dev
+
+# Use the virtual environment for all subsequent commands
+ENV PATH="/app/.venv/bin:$PATH"
 
 # Copy application sources
 COPY src/       src/
@@ -45,7 +53,8 @@ COPY pipeline/  pipeline/
 
 # Ensure output and log directories exist and are writable
 RUN mkdir -p /output/parquet/validated /app/output/logs /app/output/results /app/output/results_spark && \
-    chmod -R 777 /app/output /output
+    chmod -R 777 /app/output /output && \
+    chown -R spark:spark /app/output /output
 
 ENV PYTHONPATH=/app
 
