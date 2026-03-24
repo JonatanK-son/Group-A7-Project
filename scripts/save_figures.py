@@ -18,8 +18,8 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     print(f"Saving figures to: {output_dir.resolve()}")
 
-    # Determine which results to use (prefer Spark if available, else Dask)
-    if (results_spark_dir / "revenue_by_category.parquet").exists():
+    # Determine which results to use (prefer Dask if available, else Spark)
+    if not (results_spark_dir / "revenue_by_category.parquet").exists():
         data_source = results_spark_dir
         print("Using Spark results for visualization.")
     elif (results_dir / "revenue_by_category.parquet").exists():
