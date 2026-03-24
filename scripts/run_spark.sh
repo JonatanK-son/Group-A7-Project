@@ -1,4 +1,6 @@
 #!/bin/bash
+# Move to the project root relative to this script
+cd "$(dirname "$0")/.."
 # Script to run the Spark pipeline with dedicated cluster resources
 echo -e "\033[0;36m=== Preparing Spark Benchmark ===\033[0m"
 

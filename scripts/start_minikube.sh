@@ -1,4 +1,6 @@
 #!/bin/bash
+# Move to the project root relative to this script
+cd "$(dirname "$0")/.."
 
 # Colors for output
 CYAN='\033[0;36m'
