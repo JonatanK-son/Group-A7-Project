@@ -27,6 +27,12 @@ if ($DanglingPort) {
     Start-Sleep -Seconds 1 # Give it a moment to release
 }
 
+# Check if port 4040 is occupied by something else
+$portOccupied = Get-NetTCPConnection -LocalPort 4040 -ErrorAction SilentlyContinue
+if ($portOccupied) {
+    Write-Warning "Port 4040 is currently occupied by another application (PID: $($portOccupied.OwningProcess)). Attempting to stop it if it's a known conflict..."
+}
+
 Write-Host "Establishing port-forward to Spark UI..." -ForegroundColor Yellow
 # Specify the driver pod more reliably by finding the one with the 'spark-driver' container
 $Pods = kubectl get pods -l job-name=spark-pipeline-job -o json | ConvertFrom-Json

@@ -30,9 +30,13 @@ RUN chmod +x /opt/entrypoint.sh
 # Add python -> python3 symlink
 RUN ln -sf /usr/bin/python3 /usr/bin/python
 
-# Install requirements (pyspark 3.5.0 and dask 2026.x)
-COPY requirements.txt .
-RUN pip3 install --no-cache-dir -r requirements.txt
+# Install python dependencies via uv
+COPY pyproject.toml uv.lock ./
+RUN pip3 install uv && \
+    uv sync --frozen --no-dev
+
+# Use the virtual environment for all subsequent commands
+ENV PATH="/app/.venv/bin:$PATH"
 
 # Copy application sources
 COPY src/       src/
@@ -40,7 +44,8 @@ COPY pipeline/  pipeline/
 
 # Ensure output and log directories exist and are writable
 RUN mkdir -p /output/parquet/validated /app/output/logs /app/output/results /app/output/results_spark && \
-    chmod -R 777 /app/output /output
+    chmod -R 777 /app/output /output && \
+    chown -R spark:spark /app/output /output
 
 ENV PYTHONPATH=/app
 
